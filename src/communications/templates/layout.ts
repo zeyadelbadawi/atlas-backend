@@ -2,12 +2,20 @@
  * Email layout — P64 Communications C2.
  *
  * One HTML base and one plain-text base shared by every template. The
- * HTML is deliberately plain: a single-column table, inline styles only
- * (no `<style>` block survives every mail client), logical alignment
- * (`text-align:start`) so the same markup reads correctly under
+ * HTML is a single-column, table-based card at most 600 px wide, inline
+ * styles only (no `<style>` block survives every mail client), logical
+ * alignment (`text-align:start`) so the same markup reads correctly under
  * `dir="rtl"`, and a footer that says why the person received the email
- * and where to change that. No tracking pixel, no remote images beyond
- * the academy logo, no marketing tone.
+ * and where to change that.
+ *
+ * B2 — branded: a platform email carries the Atlas logo (a PNG on the
+ * marketing site; Gmail renders no SVG) next to the name as real text,
+ * a Royal Navy button and the company signature (website, help center,
+ * contact). An academy email keeps the academy's own name and logo and a
+ * neutral button. Colours are the brand tokens with every background set
+ * explicitly, so a client that darkens the email keeps the contrast; the
+ * Arabic layout gets an Arabic-capable font stack. No tracking pixel, no
+ * remote image beyond the two logos, no marketing tone.
  *
  * Every dynamic string is HTML-escaped here, once — templates never
  * concatenate raw values into markup.
@@ -28,6 +36,10 @@ export interface BrandingContext {
   readonly academyHost?: string;
   readonly platformName: string;
   readonly platformUrl: string;
+  /** B2 — the public marketing site (signature links, platform logo). Default `DEFAULT_SITE_URL`. */
+  readonly siteUrl?: string;
+  /** B2 — the help center. Default `DEFAULT_HELP_CENTER_URL`. */
+  readonly helpCenterUrl?: string;
 }
 
 export interface TemplateRenderContext {
@@ -81,13 +93,86 @@ const FOOTER = {
       `You received this email because you have an account with ${brand}.`,
     settings: 'Manage email settings',
     sentBy: (platform: string) => `Sent by ${platform}`,
+    tagline: 'The platform for running your online academy.',
+    website: 'Website',
+    helpCenter: 'Help center',
+    contact: 'Contact us',
   },
   ar: {
     why: (brand: string) => `وصلتك هذه الرسالة لأن لديك حسابًا لدى ${brand}.`,
     settings: 'إدارة إعدادات البريد',
     sentBy: (platform: string) => `أُرسلت بواسطة ${platform}`,
+    tagline: 'المنصة التي تدير بها أكاديميتك على الإنترنت.',
+    website: 'الموقع',
+    helpCenter: 'مركز المساعدة',
+    contact: 'تواصل معنا',
   },
 } as const;
+
+/**
+ * B2 — the public marketing site and help center the platform signature
+ * links to. Production values are the defaults; `BrandingContext.siteUrl`
+ * / `helpCenterUrl` (from `MARKETING_SITE_URL` / `HELP_CENTER_URL`)
+ * override them for another deployment.
+ */
+export const DEFAULT_SITE_URL = 'https://atlass.dpdns.org';
+export const DEFAULT_HELP_CENTER_URL = 'https://docs.atlass.dpdns.org';
+/**
+ * The Atlas mark as an email-safe PNG (Gmail renders no SVG): the approved
+ * app icon (white "A + open book" on a Royal Navy tile), 96 px for a 48 px
+ * slot, served as a static file by the marketing site. The navy tile is
+ * what keeps it legible when a client darkens the email.
+ */
+export const PLATFORM_LOGO_PATH = '/marketing-assets/brand/atlas-mark-email-2x.png';
+const PLATFORM_LOGO_SIZE = 48;
+
+/** Brand tokens (marketing/brand/tokens-final.json, light). */
+const COLOR = {
+  page: '#F5F7FB',
+  card: '#FFFFFF',
+  text: '#0E1A33',
+  muted: '#4A566E',
+  border: '#DCE2EE',
+  primary: '#1B3A8C',
+  link: '#1B4DB8',
+  accent: '#E0A526',
+  /** Academy emails keep a neutral button: the academy is the brand there. */
+  neutral: '#111827',
+} as const;
+
+const FONT = {
+  en: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif",
+  ar: "Tahoma,'Segoe UI','Noto Sans Arabic','Geeza Pro','Arabic Typesetting',Arial,sans-serif",
+} as const;
+
+function trimSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+interface SiteLinks {
+  readonly website: string;
+  readonly helpCenter: string;
+  readonly contact: string;
+  readonly logo: string;
+}
+
+/** The signature's links, in the reader's language (`/ar` on both sites). */
+function siteLinks(context: TemplateRenderContext): SiteLinks {
+  const site = trimSlash(context.branding.siteUrl ?? DEFAULT_SITE_URL);
+  const help = trimSlash(context.branding.helpCenterUrl ?? DEFAULT_HELP_CENTER_URL);
+  const prefix = context.locale === 'ar' ? '/ar' : '';
+  return {
+    website: `${site}${prefix || '/'}`,
+    helpCenter: `${help}${prefix || '/'}`,
+    contact: `${site}${prefix}/contact`,
+    logo: `${site}${PLATFORM_LOGO_PATH}`,
+  };
+}
+
+/** A platform email (no academy identity) carries the Atlas logo and signature. */
+function isPlatformEmail(context: TemplateRenderContext): boolean {
+  return !context.branding.academyName;
+}
 
 export interface LayoutInput {
   readonly title: string;
@@ -98,6 +183,12 @@ export interface LayoutInput {
   readonly extraHtml?: string;
   /** Plain-text counterpart of `extraHtml`. */
   readonly extraText?: string;
+  /**
+   * B2 — print the platform signature without its website / help center /
+   * contact links. For the sign-in code email, which carries no link at
+   * all (see `auth.email.otp`).
+   */
+  readonly signatureWithoutLinks?: boolean;
 }
 
 function brandName(context: TemplateRenderContext): string {
@@ -121,15 +212,27 @@ function positiveInt(value: number | undefined): number | undefined {
 }
 
 /**
- * The header brand mark: the academy logo with explicit `width`/`height`
- * attributes (Outlook's Word engine ignores CSS sizing), `alt` = the brand
- * name, and the email-client-safe inline reset — or, when there is no usable
- * logo, the brand name as text. A `data:` URI or a relative path never
- * reaches `src`.
+ * The header brand mark. An academy email: the academy logo with explicit
+ * `width`/`height` attributes (Outlook's Word engine ignores CSS sizing),
+ * `alt` = the brand name, and the email-client-safe inline reset — or,
+ * when there is no usable logo, the academy name as text. A `data:` URI or
+ * a relative path never reaches `src`. A platform email: the Atlas mark
+ * (alt = the platform name) beside the name in text, so the brand still
+ * reads when images are blocked.
  */
-function renderLogo(branding: BrandingContext, brand: string): string {
+function renderLogo(context: TemplateRenderContext, brand: string): string {
+  const branding = context.branding;
+  const nameStyle = `font-size:20px;line-height:28px;font-weight:700;color:${COLOR.text};`;
+  if (isPlatformEmail(context)) {
+    const logo = siteLinks(context).logo;
+    const name = `<span style="${nameStyle}">${escapeHtml(brand)}</span>`;
+    if (!isEmailSafeImageUrl(logo)) return name;
+    const size = PLATFORM_LOGO_SIZE;
+    const img = `<img src="${escapeHtml(logo)}" alt="${escapeHtml(brand)}" width="${size}" height="${size}" style="display:block;border:0;outline:none;text-decoration:none;width:${size}px;height:${size}px;border-radius:10px;" />`;
+    return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:0;vertical-align:middle;">${img}</td><td style="padding:0 12px;vertical-align:middle;">${name}</td></tr></table>`;
+  }
   if (!isEmailSafeImageUrl(branding.academyLogoUrl)) {
-    return `<span style="font-size:18px;font-weight:600;color:#111827;">${escapeHtml(brand)}</span>`;
+    return `<span style="${nameStyle}">${escapeHtml(brand)}</span>`;
   }
   const height = positiveInt(branding.academyLogoHeight) ?? 40;
   const width = positiveInt(branding.academyLogoWidth);
@@ -142,17 +245,49 @@ function renderLogo(branding: BrandingContext, brand: string): string {
  * The call-to-action, as the widely used "bulletproof" button: the colour
  * and padding sit on a table cell and the link fills it (`display:block`),
  * so the WHOLE button is the tap target in every client — including
- * Outlook's Word engine, which drops padding on `<a>` and left only the
- * label's few pixels clickable — and a phone never has to hit the text
- * exactly. Same look as before. Below it, the address itself as a real
- * link (it was plain text), for a client or a reader that will not follow
- * the button.
+ * Outlook's Word engine, which drops padding on `<a>` — and it is at least
+ * 44 px tall. Below it, the address itself as a real link, for a client or
+ * a reader that will not follow the button.
  */
-function renderCta(cta: { readonly url: string; readonly label: string }): string {
+function renderCta(
+  cta: { readonly url: string; readonly label: string },
+  color: string,
+): string {
   const href = escapeHtml(cta.url);
-  const button = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px 0;border-collapse:separate;"><tr><td align="center" bgcolor="#111827" style="background:#111827;border-radius:6px;mso-padding-alt:12px 20px;"><a href="${href}" target="_blank" style="display:block;padding:12px 20px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-size:15px;line-height:20px;font-weight:600;">${escapeHtml(cta.label)}</a></td></tr></table>`;
-  const fallback = `<p style="margin:0 0 16px 0;font-size:13px;line-height:20px;color:#6b7280;text-align:start;word-break:break-all;"><a href="${href}" target="_blank" style="color:#6b7280;text-decoration:underline;">${href}</a></p>`;
+  const button = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px 0;border-collapse:separate;"><tr><td align="center" bgcolor="${color}" style="background:${color};border-radius:8px;mso-padding-alt:14px 28px;"><a href="${href}" target="_blank" style="display:block;padding:14px 28px;background:${color};color:#FFFFFF;text-decoration:none;border-radius:8px;font-size:16px;line-height:20px;font-weight:700;">${escapeHtml(cta.label)}</a></td></tr></table>`;
+  const fallback = `<p style="margin:0 0 16px 0;font-size:13px;line-height:20px;color:${COLOR.muted};text-align:start;word-break:break-all;"><a href="${href}" target="_blank" style="color:${COLOR.muted};text-decoration:underline;">${href}</a></p>`;
   return button + fallback;
+}
+
+const SMALL = `margin:0 0 8px 0;font-size:13px;line-height:20px;color:${COLOR.muted};text-align:start;`;
+
+function footerLink(url: string, label: string): string {
+  return `<a href="${escapeHtml(url)}" target="_blank" style="color:${COLOR.link};text-decoration:underline;">${escapeHtml(label)}</a>`;
+}
+
+/** The company signature (platform emails) or the academy footer, then why + settings. */
+function renderFooterHtml(
+  context: TemplateRenderContext,
+  brand: string,
+  withLinks: boolean,
+): string {
+  const footer = FOOTER[context.locale];
+  const why = `<p style="${SMALL}">${escapeHtml(footer.why(brand))}</p>`;
+  const settings = `<p style="${SMALL}">${footerLink(context.settingsUrl, footer.settings)}</p>`;
+  if (!isPlatformEmail(context)) {
+    return `${why}${settings}<p style="${SMALL}margin:0;">${escapeHtml(footer.sentBy(context.branding.platformName))}</p>`;
+  }
+  const links = siteLinks(context);
+  const sep = `<span style="color:${COLOR.border};">&nbsp;|&nbsp;</span>`;
+  return [
+    `<p style="margin:0 0 2px 0;font-size:14px;line-height:20px;font-weight:700;color:${COLOR.text};text-align:start;">${escapeHtml(context.branding.platformName)}</p>`,
+    `<p style="${SMALL}">${escapeHtml(footer.tagline)}</p>`,
+    withLinks
+      ? `<p style="margin:0 0 16px 0;font-size:13px;line-height:20px;text-align:start;">${footerLink(links.website, footer.website)}${sep}${footerLink(links.helpCenter, footer.helpCenter)}${sep}${footerLink(links.contact, footer.contact)}</p>`
+      : '',
+    why,
+    settings.replace('margin:0 0 8px 0', 'margin:0'),
+  ].join('\n');
 }
 
 export function renderHtmlLayout(
@@ -160,18 +295,25 @@ export function renderHtmlLayout(
   context: TemplateRenderContext,
 ): string {
   const dir = context.locale === 'ar' ? 'rtl' : 'ltr';
-  const footer = FOOTER[context.locale];
   const brand = brandName(context);
-  const logo = renderLogo(context.branding, brand);
+  const platform = isPlatformEmail(context);
+  const logo = renderLogo(context, brand);
+  const font = FONT[context.locale];
   const paragraphs = input.paragraphs
     .map(
       (p) =>
-        `<p style="margin:0 0 16px 0;font-size:16px;line-height:24px;color:#111827;text-align:start;">${escapeHtml(p)}</p>`,
+        `<p style="margin:0 0 16px 0;font-size:16px;line-height:26px;color:${COLOR.text};text-align:start;">${escapeHtml(p)}</p>`,
     )
     .join('');
-  const cta = input.cta ? renderCta(input.cta) : '';
+  const cta = input.cta
+    ? renderCta(input.cta, platform ? COLOR.primary : COLOR.neutral)
+    : '';
   const preheader = input.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(input.preheader)}</div>`
+    : '';
+  // A thin gold rule under the platform header — the brand accent, never text.
+  const accent = platform
+    ? `<tr><td bgcolor="${COLOR.card}" style="padding:0 32px;background:${COLOR.card};"><div style="height:3px;line-height:3px;font-size:0;width:48px;background:${COLOR.accent};">&nbsp;</div></td></tr>`
     : '';
 
   return `<!doctype html>
@@ -179,24 +321,26 @@ export function renderHtmlLayout(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
 <title>${escapeHtml(input.title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans Arabic',Arial,sans-serif;" dir="${dir}">
+<body style="margin:0;padding:0;background:${COLOR.page};font-family:${font};" dir="${dir}" bgcolor="${COLOR.page}">
 ${preheader}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${COLOR.page}" style="background:${COLOR.page};padding:24px 12px;">
 <tr><td align="center">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;">
-<tr><td style="padding:24px 32px 8px 32px;text-align:start;">${logo}</td></tr>
-<tr><td style="padding:8px 32px 0 32px;">
-<h1 style="margin:0 0 16px 0;font-size:20px;line-height:28px;font-weight:600;color:#111827;text-align:start;">${escapeHtml(input.title)}</h1>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="${COLOR.card}" style="max-width:600px;width:100%;background:${COLOR.card};border:1px solid ${COLOR.border};border-radius:12px;font-family:${font};">
+<tr><td bgcolor="${COLOR.card}" style="padding:28px 32px 16px 32px;text-align:start;background:${COLOR.card};border-radius:12px 12px 0 0;">${logo}</td></tr>
+${accent}
+<tr><td bgcolor="${COLOR.card}" style="padding:20px 32px 8px 32px;background:${COLOR.card};">
+<h1 style="margin:0 0 16px 0;font-size:22px;line-height:30px;font-weight:700;color:${COLOR.text};text-align:start;">${escapeHtml(input.title)}</h1>
 ${paragraphs}
 ${cta}
 ${input.extraHtml ?? ''}
 </td></tr>
-<tr><td style="padding:16px 32px 24px 32px;border-top:1px solid #e5e7eb;">
-<p style="margin:0 0 6px 0;font-size:12px;line-height:18px;color:#6b7280;text-align:start;">${escapeHtml(footer.why(brand))}</p>
-<p style="margin:0 0 6px 0;font-size:12px;line-height:18px;color:#6b7280;text-align:start;"><a href="${escapeHtml(context.settingsUrl)}" style="color:#374151;">${escapeHtml(footer.settings)}</a></p>
-<p style="margin:0;font-size:12px;line-height:18px;color:#9ca3af;text-align:start;">${escapeHtml(footer.sentBy(context.branding.platformName))}</p>
+<tr><td bgcolor="${COLOR.page}" style="padding:20px 32px 24px 32px;background:${COLOR.page};border-top:1px solid ${COLOR.border};border-radius:0 0 12px 12px;">
+${renderFooterHtml(context, brand, !input.signatureWithoutLinks)}
 </td></tr>
 </table>
 </td></tr>
@@ -215,12 +359,25 @@ export function renderTextLayout(
   for (const p of input.paragraphs) lines.push(p, '');
   if (input.cta) lines.push(`${input.cta.label}: ${input.cta.url}`, '');
   if (input.extraText) lines.push(input.extraText, '');
-  lines.push(
-    '--',
-    footer.why(brand),
-    `${footer.settings}: ${context.settingsUrl}`,
-    footer.sentBy(context.branding.platformName),
-  );
+  lines.push('--');
+  if (isPlatformEmail(context)) {
+    const links = siteLinks(context);
+    lines.push(context.branding.platformName, footer.tagline);
+    if (!input.signatureWithoutLinks) {
+      lines.push(
+        `${footer.website}: ${links.website}`,
+        `${footer.helpCenter}: ${links.helpCenter}`,
+        `${footer.contact}: ${links.contact}`,
+      );
+    }
+    lines.push('', footer.why(brand), `${footer.settings}: ${context.settingsUrl}`);
+  } else {
+    lines.push(
+      footer.why(brand),
+      `${footer.settings}: ${context.settingsUrl}`,
+      footer.sentBy(context.branding.platformName),
+    );
+  }
   return lines.join('\n');
 }
 
@@ -233,6 +390,8 @@ export interface LocaleDefinition {
   ) => string[];
   /** Label for the call-to-action; the URL is the catalogue's branded action URL. Omitted when the key has none. */
   readonly ctaLabel?: string;
+  /** See `LayoutInput.signatureWithoutLinks`. */
+  readonly signatureWithoutLinks?: boolean;
 }
 
 /** Builds a `TemplateLocale` from copy alone — the layout supplies structure, escaping and the footer. */
@@ -248,6 +407,7 @@ export function defineLocale(definition: LocaleDefinition): TemplateLocale {
       definition.ctaLabel && context.actionUrl
         ? { label: definition.ctaLabel, url: context.actionUrl }
         : undefined,
+    signatureWithoutLinks: definition.signatureWithoutLinks,
   });
   return {
     subject: definition.subject,
