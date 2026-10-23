@@ -374,6 +374,19 @@ export class CommunicationDispatchService {
       });
     }
 
+    // B2 — a short-notice email that waited too long (deferred past a
+    // provider-quota reset) is no longer true; the in-app half stands.
+    if (
+      entry.emailStaleAfterSeconds !== undefined &&
+      now.getTime() - row.createdAt.getTime() > entry.emailStaleAfterSeconds * 1000
+    ) {
+      return this.settle(tx, outboxId, 'dispatched', 'stale', {
+        inApp: channels.inApp,
+        outcome: 'in_app_only',
+        emailStatus: 'suppressed',
+      });
+    }
+
     // Preferences — only `preference`/`digest` policies consult them;
     // `always` (security, transactional, lifecycle facts) bypasses them.
     const preferences = resolveCommunicationPreferences(recipient.preferences, {

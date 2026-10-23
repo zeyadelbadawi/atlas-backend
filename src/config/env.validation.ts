@@ -867,6 +867,10 @@ const EnvSchema = z.object({
   // DNS) — the same value on every provider.
   EMAIL_FROM_EMAIL: z.string().email().optional(),
   EMAIL_FROM_NAME: z.string().min(1).default('Atlas'),
+  // B2 — the email signature's links and the platform logo's host. Unset →
+  // the production marketing site and help center.
+  MARKETING_SITE_URL: z.string().url().optional(),
+  HELP_CENTER_URL: z.string().url().optional(),
   EMAIL_REPLY_TO: z.string().email().optional(),
   // Inbound delivery-webhook authentication. Brevo has no HMAC: the secret
   // travels in the webhook URL (`?secret=`). Resend signs via Svix

@@ -71,6 +71,7 @@ describe('email layout — academy logo', () => {
   });
 
   it('uses the platform name when no academy is attached, in both locales', () => {
+    // B2 — beside the Atlas mark, as real text.
     expect(render({})).toContain('>Atlas</span>');
     const ar = render({ academyName: 'أكاديمية', academyLogoUrl: LOGO }, 'ar');
     expect(ar).toContain('dir="rtl"');

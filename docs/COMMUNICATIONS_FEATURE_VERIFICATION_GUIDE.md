@@ -221,8 +221,9 @@ category class:
 | Category | Line |
 |---|---|
 | `security`, `transactional` | 100 % (may use the whole budget) |
-| `lifecycle` | 85 % |
-| `engagement`, `operational` | 70 % |
+| `operational` | 80 % |
+| `lifecycle` | 70 % |
+| `engagement` | 60 % |
 
 Counters are Redis keys `comm:quota:brevo:d:YYYYMMDD` and `comm:quota:brevo:m:YYYYMM` (UTC), bumped
 only on an **accepted** send. The per-second limiter is `comm:rate:brevo:<epochSecond>`.
@@ -1317,7 +1318,7 @@ ORDER BY d.created_at DESC;
 | **The recipient is gone or anonymised** | `state = 'suppressed'`, `last_error = 'recipient_unavailable'` or `'no_recipient'` | The account was deleted or anonymised (its address was rewritten to `@account.invalid`) |
 | **The catalogue key is unknown** | `state = 'failed'`, `last_error = 'unknown_key:<key>'` | A deploy skew: a row written by a newer build being dispatched by an older one |
 | **The provider rejected it** | A `communication_deliveries` row with `status = 'failed'` and a populated `error_code`; outbox `state='pending'` (will retry) or `'failed'` (retries exhausted) | `error_code` carries the provider's message (first 200 chars). Console: `deliveries.byStatus.failed` and `outbox.failed`. Retry policy: **6 attempts**, exponential from 30 s. A **permanent** (4xx) error stops the chain immediately — no other provider will take a malformed request; a **transient** (429/5xx/network) error moves to the next provider, of which there is currently none |
-| **Quota exhausted** | No delivery row for that attempt; the log says `Email provider skipped: quota line exhausted.` | Console `providers[0].dailyUsed` vs `dailyLimit` (300). Remember the class lines: engagement/operational stop at 70 %, lifecycle at 85 % |
+| **Quota exhausted** | No delivery row for that attempt; the log says `Email provider skipped: quota line exhausted.` | Console `providers[0].dailyUsed` vs `dailyLimit` (300). Remember the class lines: engagement stops at 60 %, lifecycle at 70 %, operational at 80 % |
 | **Accepted by Brevo but bounced** | Delivery `status = 'bounced'` (or `'complained'` / `'deferred'` for a soft bounce) | The webhook did its job. Cross-check the message in Brevo's event log by `provider_message_id`. A hard bounce or complaint also writes a permanent suppression |
 | **Accepted but never reported** | Delivery stuck at `status = 'sent'` long after `sent_at` | The webhook is not arriving. Test `POST /api/v1/webhooks/email/brevo?secret=…` directly (§H.5). Check the webhook is still registered at Brevo and that `atlas_comm_webhook_signature_failures_total` is not climbing |
 | **Delivered but the person says they didn't get it** | Delivery `status = 'delivered'` and Brevo's log agrees | The mailbox. Spam folder, a provider-side filter, an alias. Brevo free also appends its own footer, which some filters weight. Ask for the exact address and compare it to `users.email` |
@@ -1357,8 +1358,8 @@ shared, capped budget and can put a real address on a suppression list. Follow t
    hard bounce, which writes a **permanent** suppression keyed on that address's hash.
 2. **Stay inside the budget.** 300/day, shared, UTC reset. Check
    `providers[0].dailyUsed` before and after your session and record both numbers. If `dailyUsed` is
-   already past ~200, postpone non-essential tests: the engagement line cuts off at 70 % (210) and
-   the lifecycle line at 85 % (255).
+   already past ~170, postpone non-essential tests: the engagement line cuts off at 60 % (180), the
+   lifecycle line at 70 % (210) and the operational line at 80 % (240).
 3. **An API 200 is not delivery.** Brevo accepting a request means it has queued it. The only
    evidence of delivery is Brevo's event log showing `delivered` for that `provider_message_id`, plus
    the message in the inbox. Never write "verified delivery" on the strength of a 2xx.

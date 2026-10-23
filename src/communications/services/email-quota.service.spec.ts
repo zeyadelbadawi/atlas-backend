@@ -56,9 +56,9 @@ describe('EmailQuotaService', () => {
   it('defines the class lines', () => {
     expect(categoryLine('security')).toBe(1);
     expect(categoryLine('transactional')).toBe(1);
-    expect(categoryLine('lifecycle')).toBe(0.85);
-    expect(categoryLine('engagement')).toBe(0.7);
-    expect(categoryLine('operational')).toBe(0.7);
+    expect(categoryLine('operational')).toBe(0.8);
+    expect(categoryLine('lifecycle')).toBe(0.7);
+    expect(categoryLine('engagement')).toBe(0.6);
   });
 
   it('increments both windows on an accepted send and publishes the used ratio', async () => {
@@ -79,21 +79,30 @@ describe('EmailQuotaService', () => {
     expect(usage.daily).toEqual({ used: 2, limit: 300, ratio: 2 / 300 });
   });
 
-  it('stops engagement at 70%, lifecycle at 85%, and security only at 100% of the daily budget', async () => {
+  it('stops engagement at 60%, lifecycle at 70%, operational at 80%, and security only at 100% of the daily budget', async () => {
     const redis = memoryRedis();
     const service = new EmailQuotaService(redis.service, {
       setQuotaUsedRatio: jest.fn(),
     } as unknown as CommunicationMetricsService);
 
-    redis.store.set(dailyKey('brevo', now), 210); // 70% of 300
+    redis.store.set(dailyKey('brevo', now), 180); // 60% of 300
     expect(await service.reserve('brevo', 'engagement', brevo, now)).toEqual({
       ok: false,
       reason: 'daily',
     });
     expect(await service.reserve('brevo', 'lifecycle', brevo, now)).toEqual({ ok: true });
 
-    redis.store.set(dailyKey('brevo', now), 255); // 85%
+    redis.store.set(dailyKey('brevo', now), 210); // 70%
     expect(await service.reserve('brevo', 'lifecycle', brevo, now)).toEqual({
+      ok: false,
+      reason: 'daily',
+    });
+    expect(await service.reserve('brevo', 'operational', brevo, now)).toEqual({
+      ok: true,
+    });
+
+    redis.store.set(dailyKey('brevo', now), 240); // 80%
+    expect(await service.reserve('brevo', 'operational', brevo, now)).toEqual({
       ok: false,
       reason: 'daily',
     });
@@ -108,12 +117,34 @@ describe('EmailQuotaService', () => {
     });
   });
 
+  it('B2 — however much lifecycle and bulk mail is queued, critical mail keeps 20% of the free daily budget', async () => {
+    const redis = memoryRedis();
+    const service = new EmailQuotaService(redis.service, {
+      setQuotaUsedRatio: jest.fn(),
+    } as unknown as CommunicationMetricsService);
+    // Send non-critical mail until every non-critical line refuses (the
+    // per-second window is not what is under test here).
+    const daily = { ...brevo, perSecond: undefined };
+    let sent = 0;
+    for (let i = 0; i < 1000; i++) {
+      const category = (['lifecycle', 'engagement', 'operational'] as const)[i % 3];
+      if ((await service.reserve('brevo', category, daily, now)).ok) {
+        await service.recordAccepted('brevo', daily, now);
+        sent++;
+      }
+    }
+    expect(sent).toBe(240);
+    for (const critical of ['security', 'transactional'] as const) {
+      expect(await service.reserve('brevo', critical, daily, now)).toEqual({ ok: true });
+    }
+  });
+
   it('applies the same lines to the monthly window', async () => {
     const redis = memoryRedis();
     const service = new EmailQuotaService(redis.service, {
       setQuotaUsedRatio: jest.fn(),
     } as unknown as CommunicationMetricsService);
-    redis.store.set(monthlyKey('resend', now), 2100); // 70% of 3000
+    redis.store.set(monthlyKey('resend', now), 2400); // 80% of 3000
     const resend = { ...brevo, dailyLimit: 100, monthlyLimit: 3000, perSecond: 2 };
     expect(await service.reserve('resend', 'operational', resend, now)).toEqual({
       ok: false,

@@ -418,6 +418,8 @@ function toEvaluationInput(candidate: LifecycleCandidate): LifecycleEvaluationIn
       candidate.organization.trialRedemptions.map((row) => row.redeemedAt),
     ),
     billingCycle: candidate.billingCycle,
+    // B2 — a long period gets the 30-day reminder whatever its cycle.
+    currentPeriodStart: candidate.currentPeriodStart,
     // B0-MSG-05 part 3 — the activation clock and anchor.
     organizationCreatedAt: candidate.organization.createdAt,
   };

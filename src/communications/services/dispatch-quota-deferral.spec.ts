@@ -235,3 +235,49 @@ describe('dispatch — campaign rows', () => {
     expect(h.transport.send).not.toHaveBeenCalled();
   });
 });
+
+describe('dispatch — B2 stale short-notice reminders', () => {
+  it('sends a "trial ends tomorrow" email that is still fresh', async () => {
+    const row = outboxRow({
+      key: 'lifecycle.trial.ending_soon',
+      category: 'lifecycle',
+      values: { anchorAt: new Date().toISOString(), trialEndsAtDate: 'x' },
+      channels: { inApp: true, email: 'always' },
+      createdAt: new Date(Date.now() - 60_000),
+    });
+    const h = harness(row);
+    h.transport.send.mockResolvedValue({ provider: 'brevo', providerMessageId: 'm-1' });
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'sent',
+    );
+  });
+
+  it('settles it in-app only, without sending, once a quota deferral has made it stale', async () => {
+    const row = outboxRow({
+      key: 'lifecycle.trial.ending_soon',
+      category: 'lifecycle',
+      values: { anchorAt: new Date().toISOString(), trialEndsAtDate: 'x' },
+      channels: { inApp: true, email: 'always' },
+      createdAt: new Date(Date.now() - 13 * 60 * 60 * 1000),
+    });
+    const h = harness(row);
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'in_app_only',
+    );
+    expect(h.transport.send).not.toHaveBeenCalled();
+    expect(h.tx.communicationOutbox.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ state: 'dispatched', lastError: 'stale' }),
+      }),
+    );
+  });
+
+  it('never treats an ordinary transactional email as stale', async () => {
+    const row = outboxRow({ createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) });
+    const h = harness(row);
+    h.transport.send.mockResolvedValue({ provider: 'brevo', providerMessageId: 'm-2' });
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'sent',
+    );
+  });
+});
