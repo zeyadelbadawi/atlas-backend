@@ -2999,6 +2999,8 @@ enum PlatformContactTopic {
   support
   partnership
   other
+  /// B2 — an application for the Founding Academies programme (`/contact?topic=founding`).
+  founding
 
   @@map("platform_contact_topic")
 }

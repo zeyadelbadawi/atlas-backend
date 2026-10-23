@@ -17,6 +17,7 @@ export const PLATFORM_CONTACT_TOPICS = [
   'support',
   'partnership',
   'other',
+  'founding',
 ] as const satisfies readonly PlatformContactTopic[];
 
 export const PLATFORM_CONTACT_STATUSES = [
@@ -49,7 +50,15 @@ export const PLATFORM_CONTACT_LIMITS = {
  */
 export const CONTACT_CONSENT_WORDING_VERSION = 'contact-consent-2026-10-draft1';
 
-/** B0-SUP-04 — optional qualification answers for `topic = sales` (CHECK-listed in the migration). */
+/**
+ * B0-SUP-04 — optional qualification answers (CHECK-listed in the migration),
+ * kept only for the topics below. B2: a Founding Academies application is a
+ * sales conversation, so it carries the same answers.
+ */
+export const PLATFORM_CONTACT_QUALIFIED_TOPICS: readonly PlatformContactTopic[] = [
+  'sales',
+  'founding',
+];
 export const PLATFORM_CONTACT_REQUESTER_ROLES = [
   'academy_owner',
   'teacher',

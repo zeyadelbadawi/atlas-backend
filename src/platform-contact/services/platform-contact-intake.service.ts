@@ -46,6 +46,7 @@ import type { SubmitPlatformContactDto } from '../dto/submit-platform-contact.dt
 import type { PlatformContactReceiptResponse } from '../dto/platform-contact-submission.contract';
 import {
   CONTACT_CONSENT_WORDING_VERSION,
+  PLATFORM_CONTACT_QUALIFIED_TOPICS,
   PLATFORM_CONTACT_DEDUPE_TTL_SECONDS,
   PLATFORM_CONTACT_LIMITS,
   PLATFORM_CONTACT_MIN_FILL_MS,
@@ -184,7 +185,8 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
    *     consent the visitor TICKED stamped with now + the server's wording
    *     version (unticked or absent = NULL = not given; marketing consent is
    *     therefore false unless explicitly given), and the sales
-   *     qualification answers for `topic = sales` only.
+   *     qualification answers for the qualified topics
+   *     (`PLATFORM_CONTACT_QUALIFIED_TOPICS`: sales, founding) only.
    *   - FLAG_ATTRIBUTION_CAPTURE_MODE on: the sanitised attribution object
    *     (no personal data, capped); an untagged visit stores nothing.
    */
@@ -212,7 +214,7 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
         fields.marketingConsentAt = now;
         fields.marketingConsentVersion = CONTACT_CONSENT_WORDING_VERSION;
       }
-      if (payload.topic === 'sales') {
+      if (PLATFORM_CONTACT_QUALIFIED_TOPICS.includes(payload.topic)) {
         fields.requesterRole = payload.requesterRole ?? null;
         fields.subject = payload.subject ?? null;
         fields.studentBand = payload.studentBand ?? null;
