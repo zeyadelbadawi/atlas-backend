@@ -334,6 +334,32 @@ describe('Website page history, create-with-sections and chrome lock (e2e)', () 
     expect(await admin.websitePageVersion.count({ where: { pageId } })).toBe(1);
   });
 
+  it('restores a version saved with an empty title, as a page save accepts one', async () => {
+    const { owner, base } = await seedManagedAcademy('p4-empty-title');
+    const page = await api(owner.token)
+      .post(`${base}/pages`, { title: 'Untitled soon', slug: 'untitled-soon' })
+      .expect(201);
+    const pageId = page.body.id as string;
+    await save(owner.token, base, pageId, { title: '' });
+    await api(owner.token)
+      .post(`${base}/pages/${pageId}/publish`, {
+        expectedVersion: await pageVersion(owner.token, base, pageId),
+      })
+      .expect(201);
+    const [published] = (
+      await api(owner.token).get(`${base}/pages/${pageId}/versions`).expect(200)
+    ).body.items;
+    expect(published.title).toBe('');
+
+    await save(owner.token, base, pageId, { title: 'Named again' });
+    const restored = await api(owner.token)
+      .post(`${base}/pages/${pageId}/versions/${published.id}/restore`, {
+        expectedVersion: await pageVersion(owner.token, base, pageId),
+      })
+      .expect(200);
+    expect(restored.body.title).toBe('');
+  });
+
   it('keeps the newest 30 versions per page, and a site publish records changed pages only', async () => {
     const { owner, academy, base } = await seedManagedAcademy('p4-retention');
     const page = await api(owner.token)

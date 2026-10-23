@@ -78,6 +78,7 @@ import {
   zodIssuesToViolations,
 } from '../../common/validation/zod-violations.util';
 import type { FieldViolation } from '../../common/dto/api-error.dto';
+import { z } from 'zod';
 import { RESERVED_PAGE_SLUGS } from '../constants/website.constants';
 import { resolveDefaultLocale } from '../constants/locale.constants';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -1097,10 +1098,12 @@ export class WebsitePagesService {
     sections: Prisma.InputJsonValue;
   }> {
     const violations: FieldViolation[] = [];
-    const identity = createWebsitePageSchema.safeParse({
-      title: version.title,
-      slug: version.slug,
-    });
+    // The title is held to what a page save accepts (`UpdateWebsitePageDto`:
+    // at most the maximum length, empty allowed), not to page creation's
+    // "required": a page saved with an empty title must stay restorable.
+    const identity = createWebsitePageSchema
+      .extend({ title: createWebsitePageSchema.shape.title.or(z.literal('')) })
+      .safeParse({ title: version.title, slug: version.slug });
     if (!identity.success)
       violations.push(...zodIssuesToViolations(identity.error.issues));
     const seo = pageSeoSchema.safeParse(version.seo);
