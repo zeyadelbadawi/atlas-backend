@@ -55,3 +55,80 @@ describe('SubmitContactMessageDto', () => {
     await expect(errorsFor(payload)).resolves.toContain(field);
   });
 });
+
+/**
+ * One endpoint, two forms (CMS phase 3d, batch C): the Contact form's
+ * rules are unchanged, and a "register your interest" submission needs a
+ * name, a valid mobile number and the section it came from.
+ */
+describe('SubmitContactMessageDto — the interest form (CMS phase 3d, batch C)', () => {
+  async function errorsFor(payload: Record<string, unknown>): Promise<string[]> {
+    const errors = await validate(plainToInstance(SubmitContactMessageDto, payload), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    return errors.map((error) => error.property).sort();
+  }
+
+  const contact = { name: 'Visitor', email: 'visitor@example.com', message: 'Hello' };
+  const interest = {
+    kind: 'interest',
+    name: 'Mariam',
+    phoneNumber: '01001234567',
+    phoneCountry: 'EG',
+    sectionId: 'interest-1',
+  };
+
+  it('keeps the Contact form exactly as it was: name, email and message required', async () => {
+    await expect(errorsFor(contact)).resolves.toEqual([]);
+    await expect(errorsFor({ ...contact, kind: 'contact' })).resolves.toEqual([]);
+    await expect(errorsFor({ name: 'Visitor' })).resolves.toEqual(['email', 'message']);
+  });
+
+  it('accepts an interest submission with only name, phone and section', async () => {
+    await expect(errorsFor(interest)).resolves.toEqual([]);
+  });
+
+  it('accepts every optional interest field', async () => {
+    await expect(
+      errorsFor({
+        ...interest,
+        email: 'mariam@example.com',
+        message: 'Which days?',
+        choice: 'g1',
+        locale: 'ar',
+        company: '',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('requires the phone and the section on an interest submission', async () => {
+    await expect(errorsFor({ kind: 'interest', name: 'Mariam' })).resolves.toEqual([
+      'phoneCountry',
+      'phoneNumber',
+      'sectionId',
+    ]);
+  });
+
+  it('checks a sent email, an empty value and the phone itself', async () => {
+    await expect(errorsFor({ ...interest, email: 'not-an-email' })).resolves.toEqual([
+      'email',
+    ]);
+    await expect(errorsFor({ ...interest, message: '' })).resolves.toEqual(['message']);
+    await expect(errorsFor({ ...interest, choice: '' })).resolves.toEqual(['choice']);
+    await expect(errorsFor({ ...interest, phoneNumber: '123' })).resolves.toEqual([
+      'phoneNumber',
+    ]);
+    // A landline cannot take a call-back on WhatsApp/SMS: mobile numbers only.
+    await expect(errorsFor({ ...interest, phoneNumber: '0223456789' })).resolves.toEqual([
+      'phoneNumber',
+    ]);
+  });
+
+  it('refuses an unknown kind or locale', async () => {
+    await expect(errorsFor({ ...interest, kind: 'newsletter' })).resolves.toContain(
+      'kind',
+    );
+    await expect(errorsFor({ ...interest, locale: 'fr' })).resolves.toEqual(['locale']);
+  });
+});

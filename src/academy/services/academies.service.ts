@@ -2022,6 +2022,7 @@ export class AcademiesService {
             take: pageSize,
             search: query.search,
             status: query.status,
+            kind: query.kind,
             from: query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined,
             // Inclusive `to`: everything before the start of the next day.
             toExclusive: query.to

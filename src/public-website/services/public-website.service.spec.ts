@@ -249,6 +249,10 @@ describe('PublicWebsiteService.submitContactMessage', () => {
       message: 'Hello there',
       status: 'new',
       createdAt: expect.any(String),
+      kind: 'contact',
+      phone: null,
+      choice: null,
+      choiceLabel: null,
     });
     expect(Number.isNaN(Date.parse(response!.createdAt))).toBe(false);
   });
@@ -276,6 +280,191 @@ describe('PublicWebsiteService.submitContactMessage', () => {
       expect(response?.id).toBe('submission-1');
     },
   );
+});
+
+describe('PublicWebsiteService.submitContactMessage — "register your interest" (CMS phase 3d)', () => {
+  const at = new Date('2026-01-01T00:00:00.000Z');
+  const interestSection = (config: Record<string, unknown>, extra = {}) => ({
+    id: 'interest-1',
+    type: 'interestForm',
+    enabled: true,
+    visibility: { desktop: true, tablet: true, mobile: true },
+    config: {
+      title: { en: 'Register your interest', ar: '' },
+      emailField: 'optional',
+      choiceField: 'required',
+      choiceLabel: { en: 'Grade', ar: 'الصف' },
+      options: [
+        { id: 'g1', label: { en: 'First secondary', ar: 'الأول الثانوي' } },
+        { id: 'g2', label: { en: 'Second secondary', ar: 'الثاني الثانوي' } },
+      ],
+      messageField: 'hidden',
+      ...config,
+    },
+    ...extra,
+  });
+  const publishedPage = (sections: unknown[]) => ({
+    id: 'page-1',
+    academyId: ACADEMY_ID,
+    title: { en: 'Join' },
+    slug: 'join',
+    type: 'custom',
+    sections,
+    seoTitle: null,
+    seoDescription: null,
+    visible: true,
+    order: 0,
+    createdAt: at,
+    updatedAt: at,
+  });
+  const interest: SubmitContactMessageDto = {
+    kind: 'interest',
+    name: '  Mariam  ',
+    phoneNumber: '0100 123 4567',
+    phoneCountry: 'EG',
+    sectionId: 'interest-1',
+    choice: 'g2',
+    locale: 'ar',
+  };
+
+  it('stores it in the contact inbox with its kind, normalised phone and the option as the visitor saw it', async () => {
+    const { service, tx, contactSubmissionsRepository, communicationService } = build({
+      pages: [publishedPage([interestSection({})])],
+    });
+
+    const response = await service.submitContactMessage(ACADEMY_ID, interest);
+
+    expect(contactSubmissionsRepository.create).toHaveBeenCalledWith(tx, {
+      academyId: ACADEMY_ID,
+      kind: 'interest',
+      name: 'Mariam',
+      email: '',
+      message: '',
+      phoneE164: '+201001234567',
+      phoneCountry: 'EG',
+      choice: 'الثاني الثانوي',
+      choiceLabel: 'الصف',
+    });
+    expect(response).toMatchObject({
+      kind: 'interest',
+      phone: '+201001234567',
+      choice: 'الثاني الثانوي',
+      choiceLabel: 'الصف',
+    });
+    // The same notice as a contact message.
+    expect(communicationService.emit).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ key: 'academy.contact_submission.received' }),
+    );
+  });
+
+  it('refuses an option the published section does not offer (never trusting the client)', async () => {
+    const { service, contactSubmissionsRepository } = build({
+      pages: [publishedPage([interestSection({})])],
+    });
+
+    await expect(
+      service.submitContactMessage(ACADEMY_ID, { ...interest, choice: 'made-up' }),
+    ).rejects.toMatchObject({
+      response: {
+        violations: [{ field: 'choice', messageKey: 'validation:invalidChoice' }],
+      },
+    });
+    expect(contactSubmissionsRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('requires what the section requires and drops what it hides', async () => {
+    const required = build({
+      pages: [
+        publishedPage([
+          interestSection({ emailField: 'required', messageField: 'required' }),
+        ]),
+      ],
+    });
+    await expect(
+      required.service.submitContactMessage(ACADEMY_ID, {
+        ...interest,
+        choice: undefined,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        violations: [
+          { field: 'email', messageKey: 'validation:required' },
+          { field: 'message', messageKey: 'validation:required' },
+          { field: 'choice', messageKey: 'validation:required' },
+        ],
+      },
+    });
+
+    const hidden = build({
+      pages: [
+        publishedPage([
+          interestSection({ emailField: 'hidden', choiceField: 'hidden', options: [] }),
+        ]),
+      ],
+    });
+    await hidden.service.submitContactMessage(ACADEMY_ID, {
+      ...interest,
+      email: 'mariam@example.com',
+      message: 'Hi',
+      choice: 'g1',
+    });
+    expect(hidden.contactSubmissionsRepository.create).toHaveBeenCalledWith(
+      hidden.tx,
+      expect.objectContaining({
+        email: '',
+        message: '',
+        choice: null,
+        choiceLabel: null,
+      }),
+    );
+  });
+
+  it('treats a choice list without options as hidden', async () => {
+    const { service, contactSubmissionsRepository } = build({
+      pages: [publishedPage([interestSection({ options: [] })])],
+    });
+
+    await service.submitContactMessage(ACADEMY_ID, { ...interest, choice: undefined });
+
+    expect(contactSubmissionsRepository.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ choice: null }),
+    );
+  });
+
+  it.each([
+    ['an unknown section', [interestSection({}, { id: 'other' })]],
+    ['a disabled section', [interestSection({}, { enabled: false })]],
+    ['a section of another type', [{ id: 'interest-1', type: 'contact', config: {} }]],
+  ])('returns null (→ 404) for %s', async (_case, sections) => {
+    const { service, contactSubmissionsRepository } = build({
+      pages: [publishedPage(sections)],
+    });
+
+    await expect(service.submitContactMessage(ACADEMY_ID, interest)).resolves.toBeNull();
+    expect(contactSubmissionsRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('discards a filled honeypot with the same success shape', async () => {
+    const { service, contactSubmissionsRepository } = build({
+      pages: [publishedPage([interestSection({})])],
+    });
+
+    const response = await service.submitContactMessage(ACADEMY_ID, {
+      ...interest,
+      company: 'Spam Corp',
+    });
+
+    expect(contactSubmissionsRepository.create).not.toHaveBeenCalled();
+    expect(response).toMatchObject({
+      kind: 'interest',
+      name: 'Mariam',
+      phone: '+201001234567',
+      choice: 'الثاني الثانوي',
+      status: 'new',
+    });
+  });
 });
 
 describe('PublicWebsiteService.getPublicStatistics', () => {
@@ -413,6 +602,100 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
       },
       { id: 't2', quote: { en: 'Good' }, authorName: 'Omar' },
     ]);
+  });
+
+  it('never sends a sample result or schedule row to visitors (CMS phase 3d)', async () => {
+    const { service, cacheService } = build({
+      pages: [
+        page([
+          {
+            id: 'results-1',
+            type: 'results',
+            config: {
+              title: { en: 'Our top students', ar: '' },
+              items: [
+                {
+                  id: 'sample-1',
+                  studentName: 'Sample',
+                  result: { en: '99%', ar: '' },
+                  sample: true,
+                },
+                {
+                  id: 'real-1',
+                  studentName: 'Mariam',
+                  result: { en: '98%', ar: '' },
+                  top: true,
+                },
+              ],
+            },
+          },
+          {
+            id: 'schedule-1',
+            type: 'schedule',
+            config: {
+              title: { en: 'Timetable', ar: '' },
+              items: [
+                {
+                  id: 'row-1',
+                  day: 'sat',
+                  start: '16:00',
+                  end: '17:00',
+                  title: { en: 'Math', ar: '' },
+                  sample: true,
+                },
+              ],
+            },
+          },
+        ]),
+      ],
+    });
+
+    const [result] = (await service.getPublishedPages(ACADEMY_ID))!;
+    const [results, schedule] = result.sections as {
+      config: { items: { id: string }[] };
+    }[];
+    expect(results.config.items.map((item) => item.id)).toEqual(['real-1']);
+    expect(schedule.config.items).toEqual([]);
+    // What is cached is the stripped payload, not the stored one.
+    expect(JSON.stringify(cacheService.setPages.mock.calls[0])).not.toContain('sample');
+  });
+
+  it('never sends a sample video review to visitors (CMS phase 3d, batch D)', async () => {
+    const { service, cacheService } = build({
+      pages: [
+        page([
+          {
+            id: 'reviews-1',
+            type: 'videoTestimonials',
+            config: {
+              title: { en: 'Hear it from our students', ar: '' },
+              items: [
+                {
+                  id: 'starter-1',
+                  videoId: '',
+                  name: 'Starter parent',
+                  role: { en: 'Parent', ar: '' },
+                  sample: true,
+                },
+                {
+                  id: 'real-1',
+                  videoId: 'dQw4w9WgXcQ',
+                  name: 'Mona',
+                  role: { en: 'Parent', ar: '' },
+                },
+              ],
+            },
+          },
+        ]),
+      ],
+    });
+
+    const [result] = (await service.getPublishedPages(ACADEMY_ID))!;
+    const [reviews] = result.sections as { config: { items: { id: string }[] } }[];
+    expect(reviews.config.items.map((item) => item.id)).toEqual(['real-1']);
+    expect(JSON.stringify(cacheService.setPages.mock.calls[0])).not.toContain(
+      'Starter parent',
+    );
   });
 
   it('caches under the Academy’s library revision, and a hit skips the database', async () => {

@@ -18,7 +18,12 @@
  * update` (`is_academy_moderator`).
  */
 import { Injectable } from '@nestjs/common';
-import type { ContactSubmission, ContactSubmissionStatus, Prisma } from '@prisma/client';
+import type {
+  ContactSubmission,
+  ContactSubmissionKind,
+  ContactSubmissionStatus,
+  Prisma,
+} from '@prisma/client';
 
 @Injectable()
 export class ContactSubmissionsRepository {
@@ -57,6 +62,7 @@ export class ContactSubmissionsRepository {
       readonly take: number;
       readonly search?: string;
       readonly status?: ContactSubmissionStatus;
+      readonly kind?: ContactSubmissionKind;
       readonly from?: Date;
       readonly toExclusive?: Date;
       readonly sortBy?: 'createdAt' | 'name' | 'email';
@@ -67,6 +73,7 @@ export class ContactSubmissionsRepository {
     const where: Prisma.ContactSubmissionWhereInput = {
       academyId,
       ...(options.status ? { status: options.status } : {}),
+      ...(options.kind ? { kind: options.kind } : {}),
       ...(options.from || options.toExclusive
         ? {
             createdAt: {
@@ -81,6 +88,9 @@ export class ContactSubmissionsRepository {
               { name: { contains: search, mode: 'insensitive' } },
               { email: { contains: search, mode: 'insensitive' } },
               { message: { contains: search, mode: 'insensitive' } },
+              // An interest submission is found by its phone or choice too.
+              { phoneE164: { contains: search } },
+              { choice: { contains: search, mode: 'insensitive' } },
             ],
           }
         : {}),

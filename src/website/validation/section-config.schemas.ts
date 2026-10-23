@@ -72,7 +72,16 @@ import {
   MAX_HERO_HIGHLIGHTS,
   MAX_HERO_SUBTITLE_LENGTH,
   MAX_HERO_TITLE_LENGTH,
+  MAX_LOGOS,
   MAX_LONG_TEXT,
+  MAX_MAP_ADDRESS_LENGTH,
+  MAX_MAP_NOTE_LENGTH,
+  MAX_MAP_QUERY_LENGTH,
+  MAX_RESULT_VALUE_LENGTH,
+  MAX_RESULTS,
+  MAX_SCHEDULE_ROW_DETAIL_LENGTH,
+  MAX_SCHEDULE_ROW_TITLE_LENGTH,
+  MAX_SCHEDULE_ROWS,
   MAX_SECTION_ITEMS,
   MAX_SECTION_STEPS,
   MAX_SHORT_TEXT,
@@ -90,8 +99,60 @@ import {
   SECTION_ALIGNMENTS,
   SECTION_BACKGROUNDS,
   SECTION_SPACINGS,
+  SCHEDULE_DAYS,
+  SCHEDULE_TIME_PATTERN,
   SECTION_TYPES,
   SECTION_WIDTHS,
+  MAX_COUNTDOWN_DESCRIPTION_LENGTH,
+  MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH,
+  MAX_COUNTDOWN_TITLE_LENGTH,
+  MAX_PRICING_BADGE_LENGTH,
+  MAX_PRICING_DESCRIPTION_LENGTH,
+  MAX_PRICING_FEATURE_LENGTH,
+  MAX_PRICING_FEATURES,
+  MAX_PRICING_PERIOD_LENGTH,
+  MAX_PRICING_PLAN_DESCRIPTION_LENGTH,
+  MAX_PRICING_PLAN_NAME_LENGTH,
+  MAX_PRICING_PLANS,
+  MAX_PRICING_PRICE_LENGTH,
+  MAX_TIME_ZONE_LENGTH,
+  MAX_VIDEO_CAPTION_LENGTH,
+  MAX_VIDEO_DESCRIPTION_LENGTH,
+  MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH,
+  MAX_WHATSAPP_BAR_TITLE_LENGTH,
+  MIN_PRICING_PLANS,
+  TIME_ZONE_PATTERN,
+  CERTIFICATE_YEAR_PATTERN,
+  MAX_CERTIFICATES,
+  MAX_DOWNLOAD_DESCRIPTION_LENGTH,
+  MAX_DOWNLOAD_FILE_SIZE_LENGTH,
+  MAX_DOWNLOAD_FILE_TYPE_LENGTH,
+  MAX_DOWNLOAD_TITLE_LENGTH,
+  MAX_DOWNLOAD_URL_LENGTH,
+  MAX_DOWNLOADS,
+  MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH,
+  MAX_TIMELINE_MILESTONE_TITLE_LENGTH,
+  MAX_TIMELINE_MILESTONES,
+  MAX_TIMELINE_PERIOD_LENGTH,
+  MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH,
+  MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH,
+  MAX_VIDEO_TESTIMONIALS,
+  ANNOUNCEMENT_TONES,
+  COMPARISON_CELL_VALUES,
+  INTEREST_FIELD_MODES,
+  MAX_ANNOUNCEMENT_TEXT_LENGTH,
+  MAX_COMPARISON_CELL_TEXT_LENGTH,
+  MAX_COMPARISON_COLUMN_LABEL_LENGTH,
+  MAX_COMPARISON_COLUMNS,
+  MAX_COMPARISON_DESCRIPTION_LENGTH,
+  MAX_COMPARISON_ROW_LABEL_LENGTH,
+  MAX_COMPARISON_ROWS,
+  MAX_INTEREST_CHOICE_LABEL_LENGTH,
+  MAX_INTEREST_FORM_DESCRIPTION_LENGTH,
+  MAX_INTEREST_OPTION_LENGTH,
+  MAX_INTEREST_OPTIONS,
+  MAX_INTEREST_SUCCESS_MESSAGE_LENGTH,
+  MIN_COMPARISON_COLUMNS,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -99,6 +160,12 @@ import {
 } from '../constants/locale.constants';
 import { isAllowedImageValue } from './image-value.util';
 import { isSafeExternalUrl } from './url-safety.util';
+import {
+  isCountdownDeadlineOrEmpty,
+  isDownloadLinkOrEmpty,
+  isYouTubeVideoIdOrEmpty,
+  normalizeYouTubeVideoInput,
+} from './section-media-values.util';
 
 export const sectionTypeSchema = z.enum(SECTION_TYPES);
 
@@ -518,6 +585,419 @@ export const courseSpotlightSectionSchema = z.object({
   cta: websiteCtaSchema.optional(),
 });
 
+/**
+ * A plain web address a tenant typed (a logo's link) — exactly the section
+ * button's `url` rule: a real URL whose scheme `isSafeExternalUrl` allows,
+ * or empty (no link).
+ */
+const optionalSafeUrlSchema = z
+  .string()
+  .url('validation:invalidUrl')
+  .refine(isSafeExternalUrl, { message: 'validation:invalidUrl' })
+  .optional()
+  .or(z.literal(''));
+
+const logoItemSchema = z.object({
+  id: z.string(),
+  /** Required: a logo without its image is not a logo. Same image rule as every image field. */
+  image: imageValueSchema.pipe(z.string().min(1, 'validation:required')),
+  /** The partner's name as a screen reader announces it (and the link's name when linked). */
+  alt: localizedRequired(MAX_SHORT_TEXT),
+  url: optionalSafeUrlSchema,
+});
+
+/** CMS phase 3d — partner / accreditation logos: a calm wrapping grid, never a marquee. */
+export const logosSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(logoItemSchema).max(MAX_LOGOS),
+});
+
+/**
+ * CMS phase 3d — where the academy is. `address` is the visible card
+ * (multi-line); `query` (an address or `lat,lng`) feeds the map and the
+ * directions link and falls back to the address when empty. It is never
+ * an `href` itself: the renderer encodes it into a fixed Google Maps URL.
+ */
+export const mapSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  address: localizedRequired(MAX_MAP_ADDRESS_LENGTH),
+  note: localizedOptional(MAX_MAP_NOTE_LENGTH).optional(),
+  query: z.string().max(MAX_MAP_QUERY_LENGTH, 'validation:maxLength').optional(),
+});
+
+const scheduleTimeSchema = z
+  .string()
+  .regex(SCHEDULE_TIME_PATTERN, 'validation:invalidTime');
+
+const scheduleRowSchema = z
+  .object({
+    id: z.string(),
+    day: z.enum(SCHEDULE_DAYS),
+    start: scheduleTimeSchema,
+    end: scheduleTimeSchema,
+    /** The course or group meeting at that time. */
+    title: localizedRequired(MAX_SCHEDULE_ROW_TITLE_LENGTH),
+    teacher: localizedOptional(MAX_SCHEDULE_ROW_DETAIL_LENGTH).optional(),
+    location: localizedOptional(MAX_SCHEDULE_ROW_DETAIL_LENGTH).optional(),
+    /** Starter row for preview only — never public (see `sample-content.util.ts`). */
+    sample: z.boolean().optional(),
+  })
+  // `HH:MM` compares correctly as text.
+  .refine((row) => row.end > row.start, {
+    message: 'validation:endAfterStart',
+    path: ['end'],
+  });
+
+/** CMS phase 3d — a weekly timetable, shown by day (Saturday first). */
+export const scheduleSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(scheduleRowSchema).max(MAX_SCHEDULE_ROWS),
+});
+
+const resultItemSchema = z.object({
+  id: z.string(),
+  /** A proper name — not translated, like `testimonial.authorName`. */
+  studentName: z
+    .string()
+    .min(1, 'validation:required')
+    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  /** The achievement itself ("98%", "الأول على الجمهورية"). */
+  result: localizedRequired(MAX_RESULT_VALUE_LENGTH),
+  /** Grade, year or exam ("Thanaweya Amma 2025"). */
+  detail: localizedOptional(MAX_SHORT_TEXT).optional(),
+  photo: imageValueSchema.optional(),
+  photoAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  /** Marks a top achiever (drawn with a badge, never by colour alone). */
+  top: z.boolean().optional(),
+  /**
+   * Starter content for preview/design only — exactly the testimonials'
+   * rule: the public pages payload strips it, publish warns about it, and
+   * only the Owner's explicit "This is a real result" clears it.
+   */
+  sample: z.boolean().optional(),
+});
+
+/** CMS phase 3d — student results and achievements ("أوائل"). */
+export const resultsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(resultItemSchema).max(MAX_RESULTS),
+});
+
+/*
+ * CMS phase 3d (batch A) — four sections shared by every theme. Each one
+ * mirrors the frontend's identically named schema field for field; the
+ * parity cases prove it, including that every field survives the parse.
+ */
+
+/** A "Talk to us" strip: a short line and up to three buttons (WhatsApp, a call, a page). */
+export const whatsappBarSectionSchema = z.object({
+  title: localizedRequired(MAX_WHATSAPP_BAR_TITLE_LENGTH),
+  description: localizedOptional(MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH).optional(),
+  cta: websiteCtaSchema,
+  secondaryCta: websiteCtaSchema.optional(),
+  tertiaryCta: websiteCtaSchema.optional(),
+});
+
+/**
+ * A YouTube video that loads only when the visitor presses play. A pasted
+ * link in any common form is reduced to its 11-character id
+ * (`normalizeYouTubeVideoInput`); only the id is stored, and the public site
+ * builds every YouTube address from it. Empty is a video not chosen yet: it
+ * saves, and the public site leaves the section out until it has one.
+ */
+export const videoSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_VIDEO_DESCRIPTION_LENGTH).optional(),
+  videoId: z.preprocess(
+    normalizeYouTubeVideoInput,
+    z.string().refine(isYouTubeVideoIdOrEmpty, {
+      message: 'validation:invalidYouTubeVideo',
+    }),
+  ),
+  /** An uploaded poster instead of YouTube's own thumbnail. */
+  poster: imageValueSchema.optional(),
+  caption: localizedOptional(MAX_VIDEO_CAPTION_LENGTH).optional(),
+});
+
+const pricingFeatureSchema = z.object({
+  id: z.string(),
+  text: localizedRequired(MAX_PRICING_FEATURE_LENGTH),
+  /** ✓ when the plan includes it, ✗ when it does not. */
+  included: z.boolean(),
+});
+
+const pricingPlanSchema = z.object({
+  id: z.string(),
+  name: localizedRequired(MAX_PRICING_PLAN_NAME_LENGTH),
+  /** Free text in each language ("450 ج.م", "Free") — never a number the site formats. */
+  price: localizedRequired(MAX_PRICING_PRICE_LENGTH),
+  period: localizedOptional(MAX_PRICING_PERIOD_LENGTH).optional(),
+  description: localizedOptional(MAX_PRICING_PLAN_DESCRIPTION_LENGTH).optional(),
+  features: z.array(pricingFeatureSchema).max(MAX_PRICING_FEATURES),
+  /** The "most popular" plan; the editor keeps it to one. */
+  highlighted: z.boolean().optional(),
+  badge: localizedOptional(MAX_PRICING_BADGE_LENGTH).optional(),
+  /** The plan's one button — the same targets as any section button (checked by `SectionReferenceValidatorService`). */
+  cta: websiteCtaSchema.optional(),
+});
+
+/** Plans or packages (monthly, per term): one to four. */
+export const pricingSectionSchema = z.object({
+  title: localizedOptional(MAX_SHORT_TEXT).optional(),
+  description: localizedOptional(MAX_PRICING_DESCRIPTION_LENGTH).optional(),
+  plans: z.array(pricingPlanSchema).min(MIN_PRICING_PLANS).max(MAX_PRICING_PLANS),
+});
+
+/**
+ * A countdown to a registration deadline. `deadline` is an ISO date and
+ * time with its offset (the moment); `timeZone` is the academy's IANA zone
+ * the deadline was chosen in, so the site can say it in that zone. Empty is
+ * a deadline not chosen yet: it saves, and the public site leaves the
+ * section out until it has one.
+ */
+export const countdownSectionSchema = z.object({
+  title: localizedRequired(MAX_COUNTDOWN_TITLE_LENGTH),
+  description: localizedOptional(MAX_COUNTDOWN_DESCRIPTION_LENGTH).optional(),
+  deadline: z.string().refine(isCountdownDeadlineOrEmpty, {
+    message: 'validation:invalidDeadline',
+  }),
+  timeZone: z
+    .string()
+    .max(MAX_TIME_ZONE_LENGTH, 'validation:maxLength')
+    .regex(TIME_ZONE_PATTERN, 'validation:invalid')
+    .optional(),
+  /** Shown instead of the countdown once the deadline has passed. */
+  endedMessage: localizedOptional(MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH).optional(),
+  cta: websiteCtaSchema.optional(),
+  secondaryCta: websiteCtaSchema.optional(),
+  tertiaryCta: websiteCtaSchema.optional(),
+});
+
+/*
+ * CMS phase 3d (batch C) — three sections shared by every theme, each
+ * mirroring the frontend's identically named schema field for field (the
+ * parity cases prove it, including that every field survives the parse).
+ */
+
+const interestOptionSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_INTEREST_OPTION_LENGTH),
+});
+
+/**
+ * "Register your interest": a lead form that reaches the academy's
+ * Messages through the contact form's own endpoint
+ * (`POST public/websites/:academyId/contact`, `kind: 'interest'`). Name and
+ * phone are always asked; email, the choice list and a message are each
+ * hidden, optional or required. A choice list with no options is not shown
+ * (and the public endpoint treats it as hidden). The endpoint reads this
+ * config from the PUBLISHED page to decide what it accepts: a chosen option
+ * must be one of `options` by id.
+ */
+export const interestFormSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_INTEREST_FORM_DESCRIPTION_LENGTH).optional(),
+  emailField: z.enum(INTEREST_FIELD_MODES),
+  choiceField: z.enum(INTEREST_FIELD_MODES),
+  /** The choice list's label ("Course", "Grade"); empty → "Your choice". */
+  choiceLabel: localizedOptional(MAX_INTEREST_CHOICE_LABEL_LENGTH).optional(),
+  options: z.array(interestOptionSchema).max(MAX_INTEREST_OPTIONS),
+  messageField: z.enum(INTEREST_FIELD_MODES),
+  /** Empty → "Send". */
+  submitLabel: localizedOptional(MAX_CTA_LABEL_LENGTH).optional(),
+  /** Shown (and announced) once the form is sent; empty → a standard thank-you. */
+  successMessage: localizedOptional(MAX_INTEREST_SUCCESS_MESSAGE_LENGTH).optional(),
+});
+
+/**
+ * A slim notice strip ("Registration for 2026/2027 is open"): a short line,
+ * an optional single button (the section button contract, in the `cta`
+ * slot) and a named tone each theme draws from its own palette. Never
+ * dismissible and never moving, so an edge-cached page is the same for
+ * every visitor.
+ */
+export const announcementBarSectionSchema = z.object({
+  text: localizedRequired(MAX_ANNOUNCEMENT_TEXT_LENGTH),
+  tone: z.enum(ANNOUNCEMENT_TONES),
+  cta: websiteCtaSchema.optional(),
+});
+
+const comparisonColumnSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_COMPARISON_COLUMN_LABEL_LENGTH),
+  /** The column to draw attention to; the editor keeps it to one (the site draws the first). */
+  highlighted: z.boolean().optional(),
+});
+
+/** One cell: ✓, ✗ or a short text. `column` is the id of the column it sits in. */
+const comparisonCellSchema = z.discriminatedUnion('value', [
+  z.object({ column: z.string().min(1), value: z.literal(COMPARISON_CELL_VALUES[0]) }),
+  z.object({ column: z.string().min(1), value: z.literal(COMPARISON_CELL_VALUES[1]) }),
+  z.object({
+    column: z.string().min(1),
+    value: z.literal(COMPARISON_CELL_VALUES[2]),
+    text: localizedRequired(MAX_COMPARISON_CELL_TEXT_LENGTH),
+  }),
+]);
+
+const comparisonRowSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_COMPARISON_ROW_LABEL_LENGTH),
+  /** At most one per column; a column without a cell shows a dash. */
+  cells: z.array(comparisonCellSchema).max(MAX_COMPARISON_COLUMNS),
+});
+
+/**
+ * A comparison table ("Our academy vs studying alone", or plans): two to
+ * four columns, up to fifteen rows, each cell ✓ / ✗ / short text. Every
+ * cell must name one of the section's columns, once per row.
+ */
+export const comparisonSectionSchema = z
+  .object({
+    title: localizedRequired(MAX_SHORT_TEXT),
+    description: localizedOptional(MAX_COMPARISON_DESCRIPTION_LENGTH).optional(),
+    columns: z
+      .array(comparisonColumnSchema)
+      .min(MIN_COMPARISON_COLUMNS)
+      .max(MAX_COMPARISON_COLUMNS),
+    rows: z.array(comparisonRowSchema).max(MAX_COMPARISON_ROWS),
+  })
+  .superRefine((config, ctx) => {
+    const columnIds = new Set(config.columns.map((column) => column.id));
+    config.rows.forEach((row, rowIndex) => {
+      const seen = new Set<string>();
+      row.cells.forEach((cell, cellIndex) => {
+        if (!columnIds.has(cell.column) || seen.has(cell.column)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'validation:invalid',
+            path: ['rows', rowIndex, 'cells', cellIndex, 'column'],
+          });
+        }
+        seen.add(cell.column);
+      });
+    });
+  });
+
+/*
+ * CMS phase 3d (batch D) — four sections shared by every theme, each
+ * mirroring the frontend's identically named schema field for field (the
+ * parity cases prove it, including that every field survives the parse).
+ */
+
+/** A YouTube link in any common form, stored as its 11-character id; empty is a video not chosen yet. */
+const youTubeVideoIdSchema = z.preprocess(
+  normalizeYouTubeVideoInput,
+  z.string().refine(isYouTubeVideoIdOrEmpty, {
+    message: 'validation:invalidYouTubeVideo',
+  }),
+);
+
+const timelineMilestoneSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_TIMELINE_MILESTONE_TITLE_LENGTH),
+  /** "Sept–Oct", "Term 1" — shown with the milestone, never parsed as a date. */
+  period: localizedOptional(MAX_TIMELINE_PERIOD_LENGTH).optional(),
+  description: localizedOptional(MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH).optional(),
+  /** One of the features' curated icons, or empty (the milestone's number is shown). */
+  icon: z
+    .enum(FEATURE_ICON_OPTIONS as [string, ...string[]])
+    .optional()
+    .or(z.literal('')),
+});
+
+/** A learning path ("Term 1 → Term 2 → Final revision"): an ordered list of milestones. */
+export const timelineSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(timelineMilestoneSchema).max(MAX_TIMELINE_MILESTONES),
+});
+
+const videoTestimonialItemSchema = z.object({
+  id: z.string(),
+  /** Empty saves (a starter review); the public site leaves an item without a video out. */
+  videoId: youTubeVideoIdSchema,
+  /** A proper name — not translated, like `testimonial.authorName`. */
+  name: z
+    .string()
+    .min(1, 'validation:required')
+    .max(MAX_SHORT_TEXT, 'validation:maxLength'),
+  /** "Parent of a Grade 12 student". */
+  role: localizedRequired(MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH),
+  quote: localizedOptional(MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH).optional(),
+  /** An uploaded poster instead of YouTube's own thumbnail. */
+  poster: imageValueSchema.optional(),
+  /**
+   * Starter content for preview only — exactly the testimonials' rule: the
+   * public pages payload strips it, publish warns about it, and only the
+   * Owner's explicit "This is a real review" clears it.
+   */
+  sample: z.boolean().optional(),
+});
+
+/** Student and parent video reviews: a grid of click-to-play videos. */
+export const videoTestimonialsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(videoTestimonialItemSchema).max(MAX_VIDEO_TESTIMONIALS),
+});
+
+const downloadItemSchema = z.object({
+  id: z.string(),
+  title: localizedRequired(MAX_DOWNLOAD_TITLE_LENGTH),
+  description: localizedOptional(MAX_DOWNLOAD_DESCRIPTION_LENGTH).optional(),
+  /**
+   * A media-library file (`/api/v1/public/media/…`) or an http(s) address
+   * `isSafeExternalUrl` allows (`isDownloadLinkOrEmpty`). Empty saves; the
+   * public site leaves the item out until it has a link.
+   */
+  url: z
+    .string()
+    .max(MAX_DOWNLOAD_URL_LENGTH, 'validation:maxLength')
+    .refine(isDownloadLinkOrEmpty, { message: 'validation:invalidDownloadLink' }),
+  /** "PDF"; empty → read from the link's file extension. */
+  fileType: z
+    .string()
+    .max(MAX_DOWNLOAD_FILE_TYPE_LENGTH, 'validation:maxLength')
+    .optional(),
+  /** "2.4 MB". */
+  fileSize: z
+    .string()
+    .max(MAX_DOWNLOAD_FILE_SIZE_LENGTH, 'validation:maxLength')
+    .optional(),
+});
+
+/** Downloadable resources (PDF notes, revision sheets). */
+export const downloadsSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(downloadItemSchema).max(MAX_DOWNLOADS),
+});
+
+const certificateItemSchema = z.object({
+  id: z.string(),
+  /** Required: a certificate without its image is not one. Same image rule as every image field. */
+  image: imageValueSchema.pipe(z.string().min(1, 'validation:required')),
+  title: localizedRequired(MAX_SHORT_TEXT),
+  issuer: localizedOptional(MAX_SHORT_TEXT).optional(),
+  /** Four digits ("2025"), or empty. */
+  year: z
+    .string()
+    .regex(CERTIFICATE_YEAR_PATTERN, 'validation:invalidYear')
+    .optional()
+    .or(z.literal('')),
+});
+
+/** Certificates and accreditations: framed images with captions. */
+export const certificatesSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_LONG_TEXT).optional(),
+  items: z.array(certificateItemSchema).max(MAX_CERTIFICATES),
+});
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -537,6 +1017,21 @@ const SECTION_CONFIG_SCHEMAS = {
   steps: stepsSectionSchema,
   featureSplit: featureSplitSectionSchema,
   courseSpotlight: courseSpotlightSectionSchema,
+  logos: logosSectionSchema,
+  map: mapSectionSchema,
+  schedule: scheduleSectionSchema,
+  results: resultsSectionSchema,
+  whatsappBar: whatsappBarSectionSchema,
+  video: videoSectionSchema,
+  pricing: pricingSectionSchema,
+  countdown: countdownSectionSchema,
+  timeline: timelineSectionSchema,
+  videoTestimonials: videoTestimonialsSectionSchema,
+  downloads: downloadsSectionSchema,
+  certificates: certificatesSectionSchema,
+  interestForm: interestFormSectionSchema,
+  announcementBar: announcementBarSectionSchema,
+  comparison: comparisonSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -659,6 +1154,77 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('courseSpotlight'),
     config: courseSpotlightSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('logos'),
+    config: logosSectionSchema,
+  }),
+  z.object({ ...sectionInstanceBase, type: z.literal('map'), config: mapSectionSchema }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('schedule'),
+    config: scheduleSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('results'),
+    config: resultsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('whatsappBar'),
+    config: whatsappBarSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('video'),
+    config: videoSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('pricing'),
+    config: pricingSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('countdown'),
+    config: countdownSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('interestForm'),
+    config: interestFormSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('announcementBar'),
+    config: announcementBarSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('comparison'),
+    config: comparisonSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('timeline'),
+    config: timelineSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('videoTestimonials'),
+    config: videoTestimonialsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('downloads'),
+    config: downloadsSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('certificates'),
+    config: certificatesSectionSchema,
   }),
 ]);
 

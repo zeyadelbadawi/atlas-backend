@@ -51,6 +51,95 @@ describe('sample social proof (plan §D.4)', () => {
     ]);
   });
 
+  it('strips sample results and schedule rows too (CMS phase 3d), keeping real ones', () => {
+    const results = {
+      id: 'rs',
+      type: 'results',
+      config: {
+        title: { en: 'Top students', ar: '' },
+        items: [
+          { id: 'real', studentName: 'Real', result: { en: '97%', ar: '' } },
+          { id: 'fake', studentName: 'S', result: { en: '99%', ar: '' }, sample: true },
+        ],
+      },
+    };
+    const schedule = {
+      id: 'sc',
+      type: 'schedule',
+      config: {
+        title: { en: 'Timetable', ar: '' },
+        items: [
+          { id: 'row-sample', day: 'sat', start: '16:00', end: '17:00', sample: true },
+          { id: 'row-real', day: 'sun', start: '16:00', end: '17:00' },
+        ],
+      },
+    };
+    const [strippedResults, strippedSchedule] = stripSampleContent([
+      results,
+      schedule,
+    ]) as {
+      config: { items: { id: string }[] };
+    }[];
+    expect(strippedResults.config.items.map((i) => i.id)).toEqual(['real']);
+    expect(strippedSchedule.config.items.map((i) => i.id)).toEqual(['row-real']);
+    expect(
+      collectSampleContent([{ id: 'p', title: 'Home', sections: [results, schedule] }]),
+    ).toEqual([
+      {
+        pageId: 'p',
+        pageTitle: 'Home',
+        sectionId: 'rs',
+        sectionType: 'results',
+        sampleItems: 1,
+      },
+      {
+        pageId: 'p',
+        pageTitle: 'Home',
+        sectionId: 'sc',
+        sectionType: 'schedule',
+        sampleItems: 1,
+      },
+    ]);
+  });
+
+  it('strips sample video reviews too (CMS phase 3d, batch D), keeping real ones', () => {
+    const reviews = {
+      id: 'vt',
+      type: 'videoTestimonials',
+      config: {
+        title: { en: 'Reviews', ar: '' },
+        items: [
+          { id: 'starter', videoId: '', name: 'Sample', sample: true },
+          { id: 'real', videoId: 'dQw4w9WgXcQ', name: 'Mona' },
+        ],
+      },
+    };
+    const [stripped] = stripSampleContent([reviews]) as {
+      config: { items: { id: string }[] };
+    }[];
+    expect(stripped.config.items.map((i) => i.id)).toEqual(['real']);
+    expect(
+      collectSampleContent([{ id: 'p', title: 'Home', sections: [reviews] }]),
+    ).toEqual([
+      {
+        pageId: 'p',
+        pageTitle: 'Home',
+        sectionId: 'vt',
+        sectionType: 'videoTestimonials',
+        sampleItems: 1,
+      },
+    ]);
+  });
+
+  it('leaves a `sample` key on any other section type alone', () => {
+    const logos = {
+      id: 'lg',
+      type: 'logos',
+      config: { items: [{ id: 'l', sample: true }] },
+    };
+    expect(stripSampleContent([logos])[0]).toBe(logos);
+  });
+
   it('ignores malformed data instead of failing', () => {
     expect(
       stripSampleContent([

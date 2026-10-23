@@ -84,6 +84,11 @@ import {
 import { buildSitemapUrls, type SitemapUrl } from '../utils/seo-files.util';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
+import {
+  findPublishedInterestForm,
+  resolveInterestSubmission,
+} from '../utils/interest-submission.util';
+import { requireNormalizedPhone } from '../../identity/phone/user-phone.service';
 import type { AcademyIdentityResponse } from '../dto/public-identity.contract';
 import type { AcademyAddressResponse } from '../../academy/dto/academy.contract';
 import { SubscriptionAccessService } from '../../plans/services/subscription-access.service';
@@ -970,6 +975,14 @@ export class PublicWebsiteService {
    * unpublished one gets the same `null` → 404 as an unknown Academy. A
    * filled honeypot (`company`) is checked only after those, so a bot
    * learns nothing a person would not, and is then discarded silently.
+   *
+   * CMS phase 3d (batch C) — a "register your interest" section submits
+   * here too (`kind: 'interest'`), through the same throttle, honeypot,
+   * table, notification and inbox. Its `sectionId` must name an enabled
+   * `interestForm` section on a PUBLISHED page (else the same 404), and
+   * what it may store — required fields, the chosen option — is decided by
+   * that section's published config (`interest-submission.util.ts`), never
+   * by the client.
    */
   async submitContactMessage(
     academyId: string,
@@ -984,19 +997,44 @@ export class PublicWebsiteService {
     );
     if (!configuration) return null;
 
+    let fields: Prisma.ContactSubmissionUncheckedCreateInput;
+    if (payload.kind === 'interest') {
+      const form = findPublishedInterestForm(
+        (await this.getPublishedPages(academyId)) ?? [],
+        payload.sectionId ?? '',
+      );
+      if (!form) return null;
+      const interest = resolveInterestSubmission(
+        form,
+        payload,
+        resolveDefaultLocale(configuration.defaultLocale),
+      );
+      // The DTO has validated the pair; the stored value is re-normalised here.
+      const phone = requireNormalizedPhone(payload.phoneNumber, payload.phoneCountry);
+      fields = {
+        academyId,
+        kind: 'interest',
+        ...interest,
+        phoneE164: phone.e164,
+        phoneCountry: phone.country,
+      };
+    } else {
+      fields = {
+        academyId,
+        name: payload.name,
+        email: payload.email ?? '',
+        message: payload.message ?? '',
+      };
+    }
+
     if ((payload.company ?? '').trim().length > 0) {
-      return this.toDiscardedSubmissionResponse(academyId, payload);
+      return this.toDiscardedSubmissionResponse(fields);
     }
 
     const { created, outboxIds } = await this.tenancyContextService.runInTenantContext(
       organizationId,
       async (tx) => {
-        const created = await this.contactSubmissionsRepository.create(tx, {
-          academyId,
-          name: payload.name,
-          email: payload.email,
-          message: payload.message,
-        });
+        const created = await this.contactSubmissionsRepository.create(tx, fields);
         // B0-WEB-05 — tell the people who manage the website, in the same
         // transaction as the insert (a rolled-back insert leaves no
         // notice). The visitor's details stay out of the notice; it only
@@ -1048,17 +1086,20 @@ export class PublicWebsiteService {
    * refers to nothing, and no stored data is read or exposed.
    */
   private toDiscardedSubmissionResponse(
-    academyId: string,
-    payload: SubmitContactMessageDto,
+    fields: Prisma.ContactSubmissionUncheckedCreateInput,
   ): ContactSubmissionResponse {
     return {
       id: randomUUID(),
-      academyId,
-      name: payload.name,
-      email: payload.email,
-      message: payload.message,
+      academyId: fields.academyId,
+      name: fields.name,
+      email: fields.email,
+      message: fields.message,
       status: 'new', // the column default a stored row starts with
       createdAt: new Date().toISOString(),
+      kind: fields.kind ?? 'contact',
+      phone: fields.phoneE164 ?? null,
+      choice: fields.choice ?? null,
+      choiceLabel: fields.choiceLabel ?? null,
     };
   }
 }

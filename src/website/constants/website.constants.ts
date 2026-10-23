@@ -194,7 +194,159 @@ export const SECTION_TYPES = [
   // Theme 4 plan §6 (frontend repo, Reports/THEME_4_RIWAQ_PLAN.md) — one real
   // course's outcomes and syllabus; shared by every theme with a base renderer.
   'courseSpotlight',
+  // CMS phase 3d (batch B) — shared by every theme, each with a renderer:
+  // partner/accreditation logos, where the academy is, the class timetable
+  // and student results.
+  'logos',
+  'map',
+  'schedule',
+  'results',
+  // CMS phase 3d (batch A) — shared by every theme, each with a base renderer.
+  'whatsappBar',
+  'video',
+  'pricing',
+  'countdown',
+  // CMS phase 3d (batch D) — shared by every theme, each with a renderer: a
+  // learning path, student/parent video reviews, downloadable resources and
+  // certificates/accreditations.
+  'timeline',
+  'videoTestimonials',
+  'downloads',
+  'certificates',
+  // CMS phase 3d (batch C) — shared by every theme, each with a renderer:
+  // the "register your interest" form (it reaches the academy's Messages
+  // like the contact form), a slim notice strip and a comparison table.
+  'interestForm',
+  'announcementBar',
+  'comparison',
 ] as const;
+
+/**
+ * CMS phase 3d (batch B) limits — match the frontend `website.constants.ts`
+ * exactly (the parity cases prove both schemas agree at each boundary).
+ *
+ * | Field                          | Limit |
+ * | ------------------------------ | ----- |
+ * | logos per section              | 12    |
+ * | map address (multi-line)       | 300   |
+ * | map note                       | 140   |
+ * | map query (address or lat,lng) | 200   |
+ * | schedule rows                  | 30    |
+ * | schedule row title             | 80    |
+ * | schedule teacher / location    | 60    |
+ * | results per section            | 24    |
+ * | a result ("98%", "الأول …")    | 40    |
+ */
+export const MAX_LOGOS = 12;
+export const MAX_MAP_ADDRESS_LENGTH = 300;
+export const MAX_MAP_NOTE_LENGTH = 140;
+export const MAX_MAP_QUERY_LENGTH = 200;
+export const MAX_SCHEDULE_ROWS = 30;
+export const MAX_SCHEDULE_ROW_TITLE_LENGTH = 80;
+export const MAX_SCHEDULE_ROW_DETAIL_LENGTH = 60;
+export const MAX_RESULTS = 24;
+export const MAX_RESULT_VALUE_LENGTH = 40;
+/** The days a schedule row may fall on, in the order an Egyptian week runs (Saturday first). */
+export const SCHEDULE_DAYS = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri'] as const;
+/** A 24-hour clock time, `HH:MM` (what `<input type="time">` gives). */
+export const SCHEDULE_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
+/*
+ * CMS phase 3d (batch A) — the "Talk to us" bar, the click-to-play video,
+ * pricing plans and the registration countdown. Characters per language,
+ * like every limit above; mirrored exactly by the frontend's
+ * `website.constants.ts` and proven at the boundaries by the parity cases.
+ */
+export const MAX_WHATSAPP_BAR_TITLE_LENGTH = 80;
+export const MAX_WHATSAPP_BAR_DESCRIPTION_LENGTH = 200;
+export const MAX_VIDEO_DESCRIPTION_LENGTH = 280;
+export const MAX_VIDEO_CAPTION_LENGTH = 200;
+/** A YouTube video id: exactly 11 characters of YouTube's own alphabet. */
+export const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+export const MIN_PRICING_PLANS = 1;
+export const MAX_PRICING_PLANS = 4;
+export const MAX_PRICING_FEATURES = 10;
+export const MAX_PRICING_DESCRIPTION_LENGTH = 280;
+export const MAX_PRICING_PLAN_NAME_LENGTH = 40;
+/** Free text, e.g. "450 ج.م" or "Free". */
+export const MAX_PRICING_PRICE_LENGTH = 24;
+export const MAX_PRICING_PERIOD_LENGTH = 30;
+export const MAX_PRICING_PLAN_DESCRIPTION_LENGTH = 160;
+export const MAX_PRICING_FEATURE_LENGTH = 80;
+export const MAX_PRICING_BADGE_LENGTH = 24;
+export const MAX_COUNTDOWN_TITLE_LENGTH = 80;
+export const MAX_COUNTDOWN_DESCRIPTION_LENGTH = 240;
+export const MAX_COUNTDOWN_ENDED_MESSAGE_LENGTH = 160;
+/** An ISO 8601 date and time WITH its offset (`2026-11-05T23:59:00+02:00`). */
+export const COUNTDOWN_DEADLINE_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-](\d{2}):(\d{2}))$/;
+/** An IANA time zone name (`Africa/Cairo`, `UTC`) — the academy's, for showing the deadline. */
+export const TIME_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
+export const MAX_TIME_ZONE_LENGTH = 64;
+
+/*
+ * CMS phase 3d (batch C) — the "register your interest" form, the notice
+ * strip and the comparison table. Characters per language, like every limit
+ * above; mirrored exactly by the frontend's `website.constants.ts` and
+ * proven at the boundaries by the parity cases.
+ */
+export const MAX_INTEREST_FORM_DESCRIPTION_LENGTH = 280;
+/** The choice list's own label ("Course", "Grade"). */
+export const MAX_INTEREST_CHOICE_LABEL_LENGTH = 60;
+export const MAX_INTEREST_OPTIONS = 12;
+export const MAX_INTEREST_OPTION_LENGTH = 80;
+export const MAX_INTEREST_SUCCESS_MESSAGE_LENGTH = 200;
+/**
+ * How the form shows one of its optional fields (email, the choice list, a
+ * message): not at all, as optional, or as required. Name and phone are
+ * always shown and required.
+ */
+export const INTEREST_FIELD_MODES = ['hidden', 'optional', 'required'] as const;
+export const MAX_ANNOUNCEMENT_TEXT_LENGTH = 140;
+/**
+ * The notice strip's ground, drawn by each theme from its own palette —
+ * named, never a colour: the brand's own fill, the theme's soft ground or
+ * its dark ground. Every one keeps the text and the button at 4.5:1.
+ */
+export const ANNOUNCEMENT_TONES = ['brand', 'soft', 'dark'] as const;
+export const MAX_COMPARISON_DESCRIPTION_LENGTH = 280;
+export const MIN_COMPARISON_COLUMNS = 2;
+export const MAX_COMPARISON_COLUMNS = 4;
+export const MAX_COMPARISON_ROWS = 15;
+export const MAX_COMPARISON_COLUMN_LABEL_LENGTH = 40;
+export const MAX_COMPARISON_ROW_LABEL_LENGTH = 80;
+/** A short text cell ("Twice a week", "مرتين أسبوعيًا"). */
+export const MAX_COMPARISON_CELL_TEXT_LENGTH = 40;
+/** A cell: ✓ (`yes`), ✗ (`no`) or a short text in both languages. */
+export const COMPARISON_CELL_VALUES = ['yes', 'no', 'text'] as const;
+
+/*
+ * CMS phase 3d (batch D) — the learning path, video reviews, downloads and
+ * certificates. Characters per language, like every limit above; mirrored
+ * exactly by the frontend's `website.constants.ts` and proven at the
+ * boundaries by the parity cases.
+ */
+export const MAX_TIMELINE_MILESTONES = 12;
+export const MAX_TIMELINE_MILESTONE_TITLE_LENGTH = 80;
+/** "Sept–Oct", "Term 1". */
+export const MAX_TIMELINE_PERIOD_LENGTH = 40;
+export const MAX_TIMELINE_MILESTONE_DESCRIPTION_LENGTH = 240;
+export const MAX_VIDEO_TESTIMONIALS = 9;
+/** "Parent of a Grade 12 student". */
+export const MAX_VIDEO_TESTIMONIAL_ROLE_LENGTH = 80;
+/** A short pull quote under the video. */
+export const MAX_VIDEO_TESTIMONIAL_QUOTE_LENGTH = 200;
+export const MAX_DOWNLOADS = 20;
+export const MAX_DOWNLOAD_TITLE_LENGTH = 100;
+export const MAX_DOWNLOAD_DESCRIPTION_LENGTH = 200;
+export const MAX_DOWNLOAD_URL_LENGTH = 2048;
+/** "PDF", "DOCX". */
+export const MAX_DOWNLOAD_FILE_TYPE_LENGTH = 12;
+/** "2.4 MB". */
+export const MAX_DOWNLOAD_FILE_SIZE_LENGTH = 16;
+export const MAX_CERTIFICATES = 12;
+/** A four-digit year from 1900 to 2099 ("2025"). */
+export const CERTIFICATE_YEAR_PATTERN = /^(?:19|20)\d{2}$/;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;
