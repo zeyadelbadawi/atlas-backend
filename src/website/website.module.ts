@@ -36,6 +36,7 @@ import { WebsiteGenerationService } from './services/website-generation.service'
 import { SectionReferenceValidatorService } from './services/section-reference-validator.service';
 import { WebsiteConfigurationRepository } from './repositories/website-configuration.repository';
 import { WebsitePagesRepository } from './repositories/website-pages.repository';
+import { WebsitePageVersionsRepository } from './repositories/website-page-versions.repository';
 import { WebsiteFaqEntriesRepository } from './repositories/website-faq-entries.repository';
 import { WebsiteTestimonialEntriesRepository } from './repositories/website-testimonial-entries.repository';
 
@@ -59,6 +60,7 @@ import { WebsiteLibraryRevisionService } from './services/website-library-revisi
     SectionReferenceValidatorService,
     WebsiteConfigurationRepository,
     WebsitePagesRepository,
+    WebsitePageVersionsRepository,
     WebsiteFaqEntriesRepository,
     WebsiteTestimonialEntriesRepository,
   ],

@@ -30,6 +30,11 @@ export interface WebsiteConfigurationResponse {
    */
   readonly defaultLocale?: PublicWebsiteLocale;
   /**
+   * CMS phase 4, management responses only: the header, footer and
+   * navigation are locked against edits (see `UpdateWebsiteConfigurationDto`).
+   */
+  readonly chromeLocked?: boolean;
+  /**
    * Management responses only: what is saved but not yet visible to
    * visitors — the site-wide settings, and how many pages.
    */

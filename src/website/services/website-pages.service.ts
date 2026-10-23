@@ -24,19 +24,28 @@
  * union) and every embedded `courseId`/`pageId` reference is verified to
  * exist, academy-scoped, via `SectionReferenceValidatorService`, before
  * anything is persisted.
+ *
+ * CMS phase 4 — page history (`WebsitePageVersionsRepository`): a version
+ * is recorded on every publish that changes what is live, before a draft
+ * save at most once per `DRAFT_SNAPSHOT_INTERVAL_MS`, and before a restore.
+ * A restore writes the DRAFT only, revalidated against today's schemas.
  */
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { WebsitePage } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyMembersRepository } from '../../academy/repositories/academy-members.repository';
 import { WebsiteConfigurationRepository } from '../repositories/website-configuration.repository';
 import { WebsitePagesRepository } from '../repositories/website-pages.repository';
+import { WebsitePageVersionsRepository } from '../repositories/website-page-versions.repository';
 import { WebsiteBootstrapService } from './website-bootstrap.service';
 import { SectionReferenceValidatorService } from './section-reference-validator.service';
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
@@ -47,7 +56,11 @@ import { pruneDeletedPageReferences } from '../utils/deleted-page-references.uti
 import type { EditingParticipant } from '../../concurrency/services/editing-presence.service';
 import {
   toManagedWebsitePageResponse,
+  toWebsitePageVersionResponse,
+  toWebsitePageVersionSummaryResponse,
   type WebsitePageResponse,
+  type WebsitePageVersionResponse,
+  type WebsitePageVersionSummaryResponse,
 } from '../dto/website-page.contract';
 import type { CreateWebsitePageDto } from '../dto/create-website-page.dto';
 import type { UpdateWebsitePageDto } from '../dto/update-website-page.dto';
@@ -60,7 +73,11 @@ import {
   sectionInstanceArraySchema,
   withRequiredLocale,
 } from '../validation/section-config.schemas';
-import { parseOrThrow } from '../../common/validation/zod-violations.util';
+import {
+  parseOrThrow,
+  zodIssuesToViolations,
+} from '../../common/validation/zod-violations.util';
+import type { FieldViolation } from '../../common/dto/api-error.dto';
 import { RESERVED_PAGE_SLUGS } from '../constants/website.constants';
 import { resolveDefaultLocale } from '../constants/locale.constants';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
@@ -69,6 +86,16 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
+
+/**
+ * A draft save records the copy it is about to replace at most this often
+ * per page: the editor autosaves every few seconds, and history should
+ * hold one entry per editing session, not one per keystroke.
+ */
+const DRAFT_SNAPSHOT_INTERVAL_MS = 10 * 60 * 1000;
+
+/** A stored version that today's section schemas or references refuse (422). */
+export const WEBSITE_PAGE_VERSION_INVALID_CODE = 'website_page_version_invalid';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -126,7 +153,92 @@ export class WebsitePagesService {
     private readonly editingPresenceService: EditingPresenceService,
     private readonly websiteConfigurationRepository: WebsiteConfigurationRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly websitePageVersionsRepository: WebsitePageVersionsRepository,
   ) {}
+
+  /**
+   * Before a draft save: keeps the copy about to be replaced, unless one was
+   * kept less than `DRAFT_SNAPSHOT_INTERVAL_MS` ago or the newest version
+   * already holds exactly this copy (e.g. it was just published).
+   */
+  private async snapshotDraftIfDue(
+    tx: Prisma.TransactionClient,
+    existing: WebsitePage,
+    userId: string,
+  ): Promise<void> {
+    const latest = await this.websitePageVersionsRepository.findLatest(
+      tx,
+      existing.academyId,
+      existing.id,
+    );
+    if (latest?.sourceVersion === existing.version) return;
+    const latestSnapshot = await this.websitePageVersionsRepository.findLatest(
+      tx,
+      existing.academyId,
+      existing.id,
+      'draft_snapshot',
+    );
+    if (
+      latestSnapshot &&
+      Date.now() - latestSnapshot.createdAt.getTime() < DRAFT_SNAPSHOT_INTERVAL_MS
+    ) {
+      return;
+    }
+    await this.websitePageVersionsRepository.record(
+      tx,
+      existing,
+      'draft_snapshot',
+      userId,
+    );
+  }
+
+  /** The 409 every version-pinned write answers when the page moved on. */
+  private async staleVersion(
+    tx: Prisma.TransactionClient,
+    page: WebsitePage | null,
+    submittedVersion: number,
+  ): Promise<StaleResourceVersionException> {
+    const editor = page?.updatedById
+      ? await tx.user.findUnique({
+          where: { id: page.updatedById },
+          select: { name: true },
+        })
+      : null;
+    return new StaleResourceVersionException({
+      submittedVersion,
+      currentVersion: page?.version ?? submittedVersion,
+      lastEditedByName: editor?.name,
+      lastEditedAt: page?.updatedAt.toISOString(),
+    });
+  }
+
+  /**
+   * Sections through the CURRENT schemas (site language included) and the
+   * academy-scoped reference validator — the one path every section write
+   * takes: page saves, create-with-sections and restores.
+   */
+  private async validateSections(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    sections: unknown,
+  ): Promise<Prisma.InputJsonValue> {
+    // B0-WEB-02 — an Arabic-default site requires the Arabic side of
+    // every required bilingual field; every other site the English.
+    const configuration = await this.websiteConfigurationRepository.findByAcademyId(
+      tx,
+      academyId,
+    );
+    const validated = withRequiredLocale(
+      resolveDefaultLocale(configuration?.defaultLocale),
+      () => parseOrThrow(sectionInstanceArraySchema, sections),
+    );
+    await this.sectionReferenceValidatorService.validateSectionReferences(
+      tx,
+      academyId,
+      validated,
+    );
+    return validated as unknown as Prisma.InputJsonValue;
+  }
 
   /** Returns the caller's academy role, which the audit row records (no second lookup). */
   private async assertCanManage(
@@ -233,6 +345,12 @@ export class WebsitePagesService {
 
         const validated = parseOrThrow(createWebsitePageSchema, payload);
         this.assertSlugAllowed(validated.slug);
+        // CMS phase 4 — optional starting sections, validated exactly like a
+        // page save's; the page and its sections commit together or not at all.
+        const sections =
+          payload.sections !== undefined
+            ? await this.validateSections(tx, academyId, payload.sections)
+            : [];
 
         try {
           const created = await this.websitePagesRepository.create(tx, {
@@ -242,7 +360,7 @@ export class WebsitePagesService {
             slug: validated.slug,
             visible: true,
             seo: {},
-            sections: [],
+            sections,
           });
           await this.auditLogWriterService.record(tx, {
             actorUserId: userId,
@@ -252,7 +370,13 @@ export class WebsitePagesService {
             action: 'website_page.created',
             targetId: created.id,
             targetLabel: created.title,
-            context: { pageType: created.pageType, slug: created.slug },
+            context: {
+              pageType: created.pageType,
+              slug: created.slug,
+              ...(payload.sections !== undefined
+                ? sectionChangeContext([], created.sections)
+                : {}),
+            },
           });
           return toManagedWebsitePageResponse(created);
         } catch (error) {
@@ -384,22 +508,18 @@ export class WebsitePagesService {
         }
 
         if (payload.sections !== undefined) {
-          // B0-WEB-02 — an Arabic-default site requires the Arabic side of
-          // every required bilingual field; every other site the English.
-          const configuration = await this.websiteConfigurationRepository.findByAcademyId(
-            tx,
-            academyId,
-          );
-          const sections = withRequiredLocale(
-            resolveDefaultLocale(configuration?.defaultLocale),
-            () => parseOrThrow(sectionInstanceArraySchema, payload.sections),
-          );
-          await this.sectionReferenceValidatorService.validateSectionReferences(
-            tx,
-            academyId,
-            sections,
-          );
-          data.sections = sections as unknown as Prisma.InputJsonValue;
+          data.sections = await this.validateSections(tx, academyId, payload.sections);
+        }
+
+        // CMS phase 4 — history keeps the copy this save replaces (throttled).
+        if (
+          payload.title !== undefined ||
+          payload.slug !== undefined ||
+          payload.visible !== undefined ||
+          payload.seo !== undefined ||
+          payload.sections !== undefined
+        ) {
+          await this.snapshotDraftIfDue(tx, existing, userId);
         }
 
         try {
@@ -674,6 +794,7 @@ export class WebsitePagesService {
 
         const byId = new Map(currentSections.map((section) => [section.id, section]));
         const reordered = orderedIds.map((id) => byId.get(id));
+        await this.snapshotDraftIfDue(tx, existing, userId);
 
         const updated = await this.websitePagesRepository.update(tx, pageId, {
           sections: reordered as unknown as Prisma.InputJsonValue,
@@ -776,6 +897,15 @@ export class WebsitePagesService {
             messageKey: 'errors.website.pageChangedDuringPublish',
           });
         }
+        // CMS phase 4 — history: what just went live, when it changed anything.
+        if (existing.publishedVersion !== existing.version) {
+          await this.websitePageVersionsRepository.record(
+            tx,
+            existing,
+            'published',
+            userId,
+          );
+        }
         await this.websiteConfigurationRepository.update(tx, academyId, {
           configVersion: { increment: 1 },
         });
@@ -797,5 +927,216 @@ export class WebsitePagesService {
         return toManagedWebsitePageResponse(published!);
       },
     );
+  }
+
+  /** CMS phase 4 — a page's history, newest first, without content. Same door as reading the page. */
+  async listVersions(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+  ): Promise<{ readonly items: readonly WebsitePageVersionSummaryResponse[] }> {
+    const rows = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
+        const page = await this.websitePagesRepository.findById(tx, academyId, pageId);
+        if (!page) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        return this.websitePageVersionsRepository.listForPage(tx, academyId, pageId);
+      },
+    );
+    return { items: rows.map(toWebsitePageVersionSummaryResponse) };
+  }
+
+  /** CMS phase 4 — one version with its full content, for a preview. */
+  async getVersion(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+    versionId: string,
+  ): Promise<WebsitePageVersionResponse> {
+    const version = await this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        await this.assertIsMember(tx, academyId, userId);
+        return this.websitePageVersionsRepository.findById(
+          tx,
+          academyId,
+          pageId,
+          versionId,
+        );
+      },
+    );
+    if (!version) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    return toWebsitePageVersionResponse(version);
+  }
+
+  /**
+   * CMS phase 4 — copies a version into the page's DRAFT (never publishes).
+   *
+   * Pinned to `expectedVersion` exactly like a save. The version's content
+   * is revalidated against TODAY's schemas and references first: a copy
+   * that no longer validates (a section type or limit that changed, a
+   * course or page since deleted) is refused with a 422
+   * `website_page_version_invalid` carrying the violations, never written.
+   * The working copy it replaces is kept as a `restore_backup` version, so
+   * the restore itself can be undone. `courseDetails` keeps its current
+   * visibility (it is not toggleable).
+   */
+  async restoreVersion(
+    academyId: string,
+    organizationId: string,
+    userId: string,
+    pageId: string,
+    versionId: string,
+    expectedVersion: number | undefined,
+  ): Promise<WebsitePageResponse> {
+    return this.tenancyContextService.runInTenantAndUserContext(
+      organizationId,
+      userId,
+      async (tx) => {
+        const role = await this.assertCanManage(tx, academyId, userId);
+        const existing = await this.websitePagesRepository.findById(
+          tx,
+          academyId,
+          pageId,
+        );
+        if (!existing) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        const version = await this.websitePageVersionsRepository.findById(
+          tx,
+          academyId,
+          pageId,
+          versionId,
+        );
+        if (!version) throw new NotFoundException({ messageKey: 'errors.notFound' });
+
+        if (expectedVersion === undefined) {
+          throw new BadRequestException({ messageKey: 'errors.website.versionRequired' });
+        }
+        if (expectedVersion !== existing.version) {
+          throw await this.staleVersion(tx, existing, expectedVersion);
+        }
+
+        const content = await this.validateRestorableVersion(tx, academyId, version);
+        if (content.slug !== existing.slug) this.assertSlugAllowed(content.slug);
+
+        await this.websitePageVersionsRepository.record(
+          tx,
+          existing,
+          'restore_backup',
+          userId,
+        );
+
+        try {
+          const updated = await this.websitePagesRepository.updateIfVersionMatches(
+            tx,
+            pageId,
+            expectedVersion,
+            {
+              title: content.title,
+              slug: content.slug,
+              visible:
+                existing.coreType === 'courseDetails'
+                  ? existing.visible
+                  : version.visible,
+              seo: content.seo,
+              sections: content.sections,
+              version: { increment: 1 },
+              updatedById: userId,
+            },
+          );
+          if (!updated) {
+            throw await this.staleVersion(
+              tx,
+              await this.websitePagesRepository.findById(tx, academyId, pageId),
+              expectedVersion,
+            );
+          }
+
+          await this.auditLogWriterService.record(tx, {
+            actorUserId: userId,
+            organizationId,
+            academyId,
+            role,
+            action: 'website_page.restored',
+            targetId: pageId,
+            targetLabel: updated.title,
+            context: {
+              pageType: updated.pageType,
+              slug: updated.slug,
+              restoredVersionId: version.id,
+              restoredVersionKind: version.kind,
+              ...sectionChangeContext(existing.sections, updated.sections),
+            },
+            before: pageAuditSnapshot(existing),
+            after: pageAuditSnapshot(updated),
+          });
+          return toManagedWebsitePageResponse(updated);
+        } catch (error) {
+          if (isUniqueConstraintViolation(error)) {
+            throw new ConflictException({ messageKey: 'errors.website.slugTaken' });
+          }
+          throw error;
+        }
+      },
+    );
+  }
+
+  /** A version's content through today's page schemas; every refusal becomes one 422 with the violations. */
+  private async validateRestorableVersion(
+    tx: Prisma.TransactionClient,
+    academyId: string,
+    version: { title: string; slug: string; seo: Prisma.JsonValue; sections: unknown },
+  ): Promise<{
+    title: string;
+    slug: string;
+    seo: Prisma.InputJsonValue;
+    sections: Prisma.InputJsonValue;
+  }> {
+    const violations: FieldViolation[] = [];
+    const identity = createWebsitePageSchema.safeParse({
+      title: version.title,
+      slug: version.slug,
+    });
+    if (!identity.success)
+      violations.push(...zodIssuesToViolations(identity.error.issues));
+    const seo = pageSeoSchema.safeParse(version.seo);
+    if (!seo.success) {
+      violations.push(
+        ...zodIssuesToViolations(seo.error.issues).map((violation) => ({
+          ...violation,
+          field: `seo.${violation.field}`,
+        })),
+      );
+    }
+    let sections: Prisma.InputJsonValue | undefined;
+    try {
+      sections = await this.validateSections(tx, academyId, version.sections);
+    } catch (error) {
+      if (!(error instanceof HttpException) || error.getStatus() !== 400) throw error;
+      const body = error.getResponse() as { violations?: FieldViolation[] };
+      violations.push(
+        ...(body.violations ?? []).map((violation) => ({
+          ...violation,
+          field: `sections.${violation.field}`,
+        })),
+      );
+    }
+    if (violations.length > 0 || !identity.success || !seo.success || !sections) {
+      throw new UnprocessableEntityException({
+        code: WEBSITE_PAGE_VERSION_INVALID_CODE,
+        messageKey: 'errors.website.versionNoLongerValid',
+        violations,
+      });
+    }
+    return {
+      title: identity.data.title,
+      slug: identity.data.slug,
+      seo: seo.data as Prisma.InputJsonValue,
+      sections,
+    };
   }
 }

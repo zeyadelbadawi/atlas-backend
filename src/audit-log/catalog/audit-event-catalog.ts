@@ -351,7 +351,7 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'academy',
     true,
     ['changedAreas'],
-    ['themeKey', 'defaultLocale'],
+    ['themeKey', 'defaultLocale', 'chromeLocked'],
   ),
   ev(
     'website.visual_identity.updated',
@@ -398,6 +398,15 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'academy',
     true,
     WEBSITE_PAGE_CONTEXT,
+  ),
+  ev(
+    'website_page.restored',
+    'website',
+    'website_page',
+    'academy',
+    true,
+    [...WEBSITE_PAGE_CONTEXT, 'restoredVersionId', 'restoredVersionKind'],
+    ['title', 'slug', 'visible', 'seo'],
   ),
   ev(
     'website_page.sections_reordered',

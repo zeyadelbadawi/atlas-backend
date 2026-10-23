@@ -176,6 +176,7 @@ model User {
   /// Phase 10.2 — cancellations this user performed.
   subscriptionCancellations                     SubscriptionCancellation[]               @relation("SubscriptionCanceller")
   websitePagesLastEdited                        WebsitePage[]                            @relation("WebsitePageUpdatedBy")
+  websitePageVersionsCreated                    WebsitePageVersion[]                     @relation("WebsitePageVersionCreatedBy")
 
   /// Phase 12 — Live Sessions add-on.
   liveProviderConnections AcademyLiveProviderConnection[] @relation("LiveProviderConnector")
@@ -706,6 +707,7 @@ model Academy {
   mediaAssets            MediaAsset[]
   websiteConfiguration   WebsiteConfiguration?
   websitePages           WebsitePage[]
+  websitePageVersions    WebsitePageVersion[]
   websiteFaqEntries      WebsiteFaqEntry[]
   websiteTestimonials    WebsiteTestimonialEntry[]
   subdomainAllocation    SubdomainAllocation?
@@ -3569,6 +3571,10 @@ model WebsiteConfiguration {
   /// publish. The public runtime reads ONLY this, so saving the working
   /// copy never changes the live site until the owner publishes.
   publishedSnapshot Json?                @map("published_snapshot")
+  /// CMS phase 4 — the header, footer and navigation menu are locked: a
+  /// configuration save that would change any of them is refused
+  /// (`errors.website.chromeLocked`). Only owners/administrators toggle it.
+  chromeLocked      Boolean              @default(false) @map("chrome_locked")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
 
@@ -3613,12 +3619,51 @@ model WebsitePage {
   /// neutral wording rather than attributing the change to nobody.
   updatedById       String?              @map("updated_by_id")
   updatedBy         User?                @relation("WebsitePageUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  versions          WebsitePageVersion[]
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
 
   @@unique([academyId, slug])
   @@index([academyId, pageType])
   @@map("website_pages")
+}
+
+/// CMS phase 4 — why a page version was recorded.
+enum WebsitePageVersionKind {
+  /// The page as it was published (one per publish, page or whole site).
+  published
+  /// A periodic copy of the working copy (at most one per page per 10 minutes of saves).
+  draft_snapshot
+  /// The working copy just before a restore replaced it, so a restore can be undone.
+  restore_backup
+
+  @@map("website_page_version_kind")
+}
+
+/// CMS phase 4 — a page's history: immutable copies of its editable content
+/// (title, slug, visibility, SEO, sections). The newest 30 per page are kept;
+/// older rows are pruned in the same transaction that records a new one.
+model WebsitePageVersion {
+  id            String                 @id @default(uuid())
+  academyId     String                 @map("academy_id")
+  academy       Academy                @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  pageId        String                 @map("page_id")
+  page          WebsitePage            @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  kind          WebsitePageVersionKind
+  title         String
+  slug          String
+  visible       Boolean
+  seo           Json
+  sections      Json
+  /// The page's `version` this copy was taken from.
+  sourceVersion Int                    @map("source_version")
+  createdById   String?                @map("created_by_id")
+  createdBy     User?                  @relation("WebsitePageVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime               @default(now()) @map("created_at")
+
+  @@index([pageId, createdAt(sort: Desc)])
+  @@index([academyId])
+  @@map("website_page_versions")
 }
 
 // ---------------------------------------------------------------------------

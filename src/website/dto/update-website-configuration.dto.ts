@@ -6,7 +6,14 @@
  * `header`/`footer` are full replaces. See `UpdateWebsitePageDto`'s doc
  * comment for why deep validation happens in the service, not here.
  */
-import { IsArray, IsIn, IsISO8601, IsObject, IsOptional } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsISO8601,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 import { SELECTABLE_WEBSITE_THEME_KEYS } from '../constants/website.constants';
 import {
   PUBLIC_WEBSITE_LOCALES,
@@ -47,6 +54,16 @@ export class UpdateWebsiteConfigurationDto {
   @IsOptional()
   @IsIn(PUBLIC_WEBSITE_LOCALES)
   readonly defaultLocale?: PublicWebsiteLocale;
+
+  /**
+   * CMS phase 4 — locks (true) or unlocks (false) the header, footer and
+   * navigation. Owners and administrators only (403
+   * `website_chrome_lock_forbidden` otherwise); while locked, a save that
+   * changes any of the three is refused (409 `website_chrome_locked`).
+   */
+  @IsOptional()
+  @IsBoolean()
+  readonly chromeLocked?: boolean;
 
   /**
    * The `updatedAt` of the configuration this edit was based on. When it no

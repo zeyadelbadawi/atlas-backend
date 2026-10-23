@@ -90,9 +90,11 @@ with no `count()`; it is served by the existing
   contact phone, website, language, time zone, currency, status, address.
 - `academy.branding.updated`, `website.visual_identity.updated` — name, logo,
   favicon.
-- `website_page.updated` — title, slug, visible, SEO; section edits are
-  summarised as counts in context.
-- `website.configuration.updated` — theme; brand/SEO/navigation/header/footer
+- `website_page.updated`, `website_page.restored` — title, slug, visible,
+  SEO; section edits are summarised as counts in context (a restore also
+  names the version it copied into the draft).
+- `website.configuration.updated` — theme, site language and the
+  header/footer lock (`chromeLocked`); brand/SEO/navigation/header/footer
   are named in `changedAreas` rather than copied.
 - `website_faq.updated`, `website_testimonial.updated` — the entry's fields.
 - `academy.registration_policy.updated`, `enrollment.expiry_updated`,
@@ -144,6 +146,7 @@ writer stores.
 | `website_page.updated` | website | academy | yes | pageType, slug, sectionsAdded, sectionsRemoved, sectionsUpdated, sectionCount |
 | `website_page.deleted` | website | academy | yes | pageType, slug, sectionsAdded, sectionsRemoved, sectionsUpdated, sectionCount |
 | `website_page.published` | website | academy | yes | pageType, slug, sectionsAdded, sectionsRemoved, sectionsUpdated, sectionCount |
+| `website_page.restored` | website | academy | yes | pageType, slug, sectionsAdded, sectionsRemoved, sectionsUpdated, sectionCount, restoredVersionId, restoredVersionKind |
 | `website_page.sections_reordered` | website | academy | yes | pageType, slug, sectionsAdded, sectionsRemoved, sectionsUpdated, sectionCount |
 | `website_faq.created` | website | academy | yes | — |
 | `website_faq.updated` | website | academy | yes | — |
