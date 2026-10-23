@@ -679,3 +679,117 @@ describe('content limits — violation payload', () => {
     ).toBe(false);
   });
 });
+
+describe('custom section (CMS phase 3c) on a page', () => {
+  const lt = (en: string) => ({ en, ar: '' });
+
+  it('accepts every element kind and keeps each field, storing a pasted YouTube link as its id', () => {
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 'custom-1',
+        type: 'custom',
+        enabled: true,
+        visibility,
+        design: { reverseOnMobile: true },
+        config: {
+          title: lt('Why families choose us'),
+          layout: 'two',
+          ratio: 'wideNarrow',
+          verticalAlign: 'center',
+          columns: [
+            {
+              id: 'c1',
+              elements: [
+                { id: 'e1', kind: 'heading', level: 'h3', text: lt('Small groups') },
+                { id: 'e2', kind: 'text', text: lt('Line one\n\nLine two') },
+                { id: 'e3', kind: 'button', cta: { label: lt('Book'), pageId: 'p' } },
+                {
+                  id: 'e4',
+                  kind: 'checklist',
+                  items: [{ id: 'i', text: lt('Weekly tests') }],
+                },
+                { id: 'e5', kind: 'spacer', size: 'large' },
+                { id: 'e6', kind: 'divider' },
+                { id: 'e7', kind: 'iconText', icon: 'Award', title: lt('Certified') },
+              ],
+            },
+            {
+              id: 'c2',
+              elements: [
+                {
+                  id: 'e8',
+                  kind: 'image',
+                  image: '/api/v1/public/media/academies/a/b.png',
+                  imageAlt: lt('A class'),
+                  ratio: 'portrait',
+                },
+                { id: 'e9', kind: 'video', videoId: 'https://youtu.be/dQw4w9WgXcQ' },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(true);
+    const config = (result.data as { config: Record<string, unknown> }[])[0].config as {
+      columns: { elements: Record<string, unknown>[] }[];
+    };
+    expect(config.columns[0].elements).toHaveLength(7);
+    expect(config.columns[1].elements[1].videoId).toBe('dQw4w9WgXcQ');
+    expect(config.columns[1].elements[0].ratio).toBe('portrait');
+  });
+
+  it('names a layout whose columns do not match, and an unsafe button address inside a column', () => {
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 'custom-1',
+        type: 'custom',
+        enabled: true,
+        visibility,
+        config: {
+          layout: 'three',
+          columns: [
+            {
+              id: 'c1',
+              elements: [
+                {
+                  id: 'b',
+                  kind: 'button',
+                  cta: { label: lt('Go'), url: 'javascript:alert(1)' },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(false);
+    const issues = result.error?.issues.map((issue) => [
+      issue.path.join('.'),
+      issue.message,
+    ]);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        ['0.config.columns.0.elements.0.cta.url', 'validation:invalidUrl'],
+      ]),
+    );
+  });
+
+  it('refuses an element kind it does not know', () => {
+    const result = sectionInstanceArraySchema.safeParse([
+      {
+        id: 'custom-1',
+        type: 'custom',
+        enabled: true,
+        visibility,
+        config: {
+          layout: 'one',
+          columns: [
+            { id: 'c1', elements: [{ id: 'x', kind: 'html', html: '<b>hi</b>' }] },
+          ],
+        },
+      },
+    ]);
+    expect(result.success).toBe(false);
+  });
+});

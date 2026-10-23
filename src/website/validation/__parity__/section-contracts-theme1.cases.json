@@ -11977,6 +11977,1513 @@
         "items": []
       },
       "valid": false
+    },
+    {
+      "name": "custom keeps every element and its fields",
+      "type": "custom",
+      "config": {
+        "title": {
+          "en": "Why families choose us",
+          "ar": "لماذا تختارنا الأسر"
+        },
+        "description": {
+          "en": "Everything in one place.",
+          "ar": "كل شيء في مكان واحد."
+        },
+        "layout": "two",
+        "ratio": "wideNarrow",
+        "verticalAlign": "center",
+        "columns": [
+          {
+            "id": "col-1",
+            "elements": [
+              {
+                "id": "e1",
+                "kind": "heading",
+                "level": "h3",
+                "text": {
+                  "en": "Learn with the best teachers",
+                  "ar": "تعلّم مع أفضل المعلمين"
+                }
+              },
+              {
+                "id": "e2",
+                "kind": "text",
+                "text": {
+                  "en": "Small groups.\n\nWeekly tests.",
+                  "ar": "مجموعات صغيرة.\n\nاختبارات أسبوعية."
+                }
+              },
+              {
+                "id": "e3",
+                "kind": "button",
+                "cta": {
+                  "label": {
+                    "en": "Book a free trial",
+                    "ar": "احجز حصة تجريبية"
+                  },
+                  "pageId": "page-1"
+                },
+                "secondaryCta": {
+                  "label": {
+                    "en": "Chat on WhatsApp",
+                    "ar": "راسلنا على واتساب"
+                  },
+                  "whatsapp": "+201001234567",
+                  "style": "secondary"
+                },
+                "tertiaryCta": {
+                  "label": {
+                    "en": "Sign up",
+                    "ar": "أنشئ حسابًا"
+                  },
+                  "authAction": "signUp",
+                  "style": "link"
+                }
+              },
+              {
+                "id": "e4",
+                "kind": "checklist",
+                "items": [
+                  {
+                    "id": "i1",
+                    "text": {
+                      "en": "Weekly tests",
+                      "ar": "اختبارات أسبوعية"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "e5",
+                "kind": "spacer",
+                "size": "medium"
+              },
+              {
+                "id": "e6",
+                "kind": "divider"
+              },
+              {
+                "id": "e7",
+                "kind": "iconText",
+                "icon": "Award",
+                "title": {
+                  "en": "Certified teachers",
+                  "ar": "معلمون معتمدون"
+                },
+                "text": {
+                  "en": "Every one of them.",
+                  "ar": "جميعهم بلا استثناء."
+                }
+              }
+            ]
+          },
+          {
+            "id": "col-2",
+            "elements": [
+              {
+                "id": "e8",
+                "kind": "image",
+                "image": "/api/v1/public/media/academies/a1/class.png",
+                "imageAlt": {
+                  "en": "A class in progress",
+                  "ar": "حصة أثناء الشرح"
+                },
+                "ratio": "portrait"
+              },
+              {
+                "id": "e9",
+                "kind": "video",
+                "videoId": "dQw4w9WgXcQ",
+                "title": {
+                  "en": "A lesson",
+                  "ar": "درس"
+                },
+                "poster": "theme-asset:riwaq/course-fallback"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "title.en",
+        "title.ar",
+        "description.ar",
+        "layout",
+        "ratio",
+        "verticalAlign",
+        "columns.0.id",
+        "columns.1.id",
+        "columns.0.elements.0.id",
+        "columns.0.elements.0.kind",
+        "columns.0.elements.0.level",
+        "columns.0.elements.0.text.ar",
+        "columns.0.elements.1.kind",
+        "columns.0.elements.1.text.en",
+        "columns.0.elements.1.text.ar",
+        "columns.0.elements.2.cta.label.ar",
+        "columns.0.elements.2.cta.pageId",
+        "columns.0.elements.2.secondaryCta.whatsapp",
+        "columns.0.elements.2.secondaryCta.style",
+        "columns.0.elements.2.tertiaryCta.authAction",
+        "columns.0.elements.2.tertiaryCta.style",
+        "columns.0.elements.3.items.0.id",
+        "columns.0.elements.3.items.0.text.ar",
+        "columns.0.elements.4.size",
+        "columns.0.elements.5.kind",
+        "columns.0.elements.5.id",
+        "columns.0.elements.6.icon",
+        "columns.0.elements.6.title.ar",
+        "columns.0.elements.6.text.en",
+        "columns.1.elements.0.image",
+        "columns.1.elements.0.imageAlt.ar",
+        "columns.1.elements.0.ratio",
+        "columns.1.elements.1.videoId",
+        "columns.1.elements.1.title.ar",
+        "columns.1.elements.1.poster"
+      ]
+    },
+    {
+      "name": "custom stores a pasted YouTube link as its id",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "c",
+            "elements": [
+              {
+                "id": "v",
+                "kind": "video",
+                "videoId": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "normalizes": {
+        "columns.0.elements.0.videoId": "dQw4w9WgXcQ"
+      }
+    },
+    {
+      "name": "custom with one empty column",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "c",
+            "elements": []
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "layout",
+        "columns.0.id"
+      ]
+    },
+    {
+      "name": "custom with three columns",
+      "type": "custom",
+      "config": {
+        "layout": "three",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h2",
+                "text": {
+                  "en": "Learn with the best teachers",
+                  "ar": "تعلّم مع أفضل المعلمين"
+                }
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "elements": [
+              {
+                "id": "t1",
+                "kind": "text",
+                "text": {
+                  "en": "Small groups.\n\nWeekly tests.",
+                  "ar": "مجموعات صغيرة.\n\nاختبارات أسبوعية."
+                }
+              }
+            ]
+          },
+          {
+            "id": "c",
+            "elements": [
+              {
+                "id": "d",
+                "kind": "divider"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom without a title or description",
+      "type": "custom",
+      "config": {
+        "layout": "two",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h2",
+                "text": {
+                  "en": "Learn with the best teachers",
+                  "ar": "تعلّم مع أفضل المعلمين"
+                }
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "elements": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom two columns need two columns",
+      "type": "custom",
+      "config": {
+        "layout": "two",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom one column needs exactly one",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          },
+          {
+            "id": "b",
+            "elements": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom three columns need three",
+      "type": "custom",
+      "config": {
+        "layout": "three",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          },
+          {
+            "id": "b",
+            "elements": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom refuses a fourth column",
+      "type": "custom",
+      "config": {
+        "layout": "three",
+        "columns": [
+          {
+            "id": "0",
+            "elements": []
+          },
+          {
+            "id": "1",
+            "elements": []
+          },
+          {
+            "id": "2",
+            "elements": []
+          },
+          {
+            "id": "3",
+            "elements": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom refuses a layout it does not know",
+      "type": "custom",
+      "config": {
+        "layout": "four",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom needs columns",
+      "type": "custom",
+      "config": {
+        "layout": "one"
+      },
+      "valid": false
+    },
+    {
+      "name": "custom refuses an unknown ratio",
+      "type": "custom",
+      "config": {
+        "layout": "two",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          },
+          {
+            "id": "b",
+            "elements": []
+          }
+        ],
+        "ratio": "golden"
+      },
+      "valid": false
+    },
+    {
+      "name": "custom refuses an unknown vertical alignment",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          }
+        ],
+        "verticalAlign": "bottom"
+      },
+      "valid": false
+    },
+    {
+      "name": "custom column at 12 elements",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "d0",
+                "kind": "divider"
+              },
+              {
+                "id": "d1",
+                "kind": "divider"
+              },
+              {
+                "id": "d2",
+                "kind": "divider"
+              },
+              {
+                "id": "d3",
+                "kind": "divider"
+              },
+              {
+                "id": "d4",
+                "kind": "divider"
+              },
+              {
+                "id": "d5",
+                "kind": "divider"
+              },
+              {
+                "id": "d6",
+                "kind": "divider"
+              },
+              {
+                "id": "d7",
+                "kind": "divider"
+              },
+              {
+                "id": "d8",
+                "kind": "divider"
+              },
+              {
+                "id": "d9",
+                "kind": "divider"
+              },
+              {
+                "id": "d10",
+                "kind": "divider"
+              },
+              {
+                "id": "d11",
+                "kind": "divider"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom column over 12 elements",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "d0",
+                "kind": "divider"
+              },
+              {
+                "id": "d1",
+                "kind": "divider"
+              },
+              {
+                "id": "d2",
+                "kind": "divider"
+              },
+              {
+                "id": "d3",
+                "kind": "divider"
+              },
+              {
+                "id": "d4",
+                "kind": "divider"
+              },
+              {
+                "id": "d5",
+                "kind": "divider"
+              },
+              {
+                "id": "d6",
+                "kind": "divider"
+              },
+              {
+                "id": "d7",
+                "kind": "divider"
+              },
+              {
+                "id": "d8",
+                "kind": "divider"
+              },
+              {
+                "id": "d9",
+                "kind": "divider"
+              },
+              {
+                "id": "d10",
+                "kind": "divider"
+              },
+              {
+                "id": "d11",
+                "kind": "divider"
+              },
+              {
+                "id": "d12",
+                "kind": "divider"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom refuses an element kind it does not know",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "x",
+                "kind": "html",
+                "html": "<b>hi</b>"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom element needs an id",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "kind": "divider"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom heading needs its text",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h2",
+                "text": {
+                  "en": "",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom heading at 120",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h2",
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom heading over 120",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h2",
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom heading refuses h4",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h1",
+                "kind": "heading",
+                "level": "h4",
+                "text": {
+                  "en": "Learn with the best teachers",
+                  "ar": "تعلّم مع أفضل المعلمين"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom heading needs a level",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "h",
+                "kind": "heading",
+                "text": {
+                  "en": "Hi",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom text at 1500",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "t1",
+                "kind": "text",
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom text over 1500",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "t1",
+                "kind": "text",
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom text needs its text",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "t1",
+                "kind": "text",
+                "text": {
+                  "en": "",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom button needs a label",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "b",
+                "kind": "button",
+                "cta": {
+                  "label": {
+                    "en": "",
+                    "ar": ""
+                  },
+                  "pageId": "p"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom button needs its first button",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "b",
+                "kind": "button",
+                "secondaryCta": {
+                  "label": {
+                    "en": "Go",
+                    "ar": ""
+                  },
+                  "pageId": "p"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom button refuses an unsafe address",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "b",
+                "kind": "button",
+                "cta": {
+                  "label": {
+                    "en": "Go",
+                    "ar": ""
+                  },
+                  "url": "javascript:alert(1)"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom button keeps a web address and a call",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "b",
+                "kind": "button",
+                "cta": {
+                  "label": {
+                    "en": "Visit",
+                    "ar": ""
+                  },
+                  "url": "https://example.com/a"
+                },
+                "secondaryCta": {
+                  "label": {
+                    "en": "Call",
+                    "ar": ""
+                  },
+                  "phone": "19999"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "columns.0.elements.0.cta.url",
+        "columns.0.elements.0.secondaryCta.phone"
+      ]
+    },
+    {
+      "name": "custom button refuses a malformed WhatsApp number",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "b",
+                "kind": "button",
+                "cta": {
+                  "label": {
+                    "en": "Chat",
+                    "ar": ""
+                  },
+                  "whatsapp": "01001234567"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom image without a picture yet",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "i",
+                "kind": "image"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom image keeps a starter photograph",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "i",
+                "kind": "image",
+                "image": "theme-asset:modern-education/home-about",
+                "imageAlt": {
+                  "en": "Students",
+                  "ar": "طلاب"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "preserves": [
+        "columns.0.elements.0.image",
+        "columns.0.elements.0.imageAlt.en"
+      ]
+    },
+    {
+      "name": "custom image refuses an unsafe value",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "i",
+                "kind": "image",
+                "image": "javascript:alert(1)"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom image refuses an unknown frame",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "i",
+                "kind": "image",
+                "ratio": "panorama"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom image alt over 100",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "i",
+                "kind": "image",
+                "imageAlt": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom video without a video yet",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "v",
+                "kind": "video",
+                "videoId": ""
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom video refuses a link that is not YouTube",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "v",
+                "kind": "video",
+                "videoId": "https://vimeo.com/1234"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom video refuses an unsafe poster",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "v",
+                "kind": "video",
+                "videoId": "",
+                "poster": "data:text/html,hi"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom checklist at 10 items",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "l",
+                "kind": "checklist",
+                "items": [
+                  {
+                    "id": "i0",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i1",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i2",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i3",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i4",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i5",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i6",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i7",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i8",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i9",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom checklist over 10 items",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "l",
+                "kind": "checklist",
+                "items": [
+                  {
+                    "id": "i0",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i1",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i2",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i3",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i4",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i5",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i6",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i7",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i8",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i9",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  },
+                  {
+                    "id": "i10",
+                    "text": {
+                      "en": "Item",
+                      "ar": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom checklist needs an item",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "l",
+                "kind": "checklist",
+                "items": []
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom checklist item needs its text",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "l",
+                "kind": "checklist",
+                "items": [
+                  {
+                    "id": "i",
+                    "text": {
+                      "en": "",
+                      "ar": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom checklist item over 120",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "l",
+                "kind": "checklist",
+                "items": [
+                  {
+                    "id": "i",
+                    "text": {
+                      "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                      "ar": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom spacer refuses a size it does not know",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "s",
+                "kind": "spacer",
+                "size": "huge"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom spacer needs a size",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "s",
+                "kind": "spacer"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom icon with text refuses an icon outside the set",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "n",
+                "kind": "iconText",
+                "icon": "Skull",
+                "title": {
+                  "en": "Hi",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom icon with text needs a title",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "n",
+                "kind": "iconText",
+                "icon": "Award",
+                "title": {
+                  "en": "",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom icon with text at its limits",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "n",
+                "kind": "iconText",
+                "icon": "Clock",
+                "title": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": ""
+                },
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "custom icon with text over 240",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": [
+              {
+                "id": "n",
+                "kind": "iconText",
+                "icon": "Clock",
+                "title": {
+                  "en": "Hi",
+                  "ar": ""
+                },
+                "text": {
+                  "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                  "ar": ""
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "custom title over 100",
+      "type": "custom",
+      "config": {
+        "layout": "one",
+        "columns": [
+          {
+            "id": "a",
+            "elements": []
+          }
+        ],
+        "title": {
+          "en": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "ar": ""
+        }
+      },
+      "valid": false
     }
   ]
 }

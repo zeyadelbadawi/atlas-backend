@@ -219,6 +219,9 @@ export const SECTION_TYPES = [
   'interestForm',
   'announcementBar',
   'comparison',
+  // CMS phase 3c — the flexible section an Owner builds from elements, in
+  // one, two or three columns (`custom-section` limits below).
+  'custom',
 ] as const;
 
 /**
@@ -347,6 +350,57 @@ export const MAX_DOWNLOAD_FILE_SIZE_LENGTH = 16;
 export const MAX_CERTIFICATES = 12;
 /** A four-digit year from 1900 to 2099 ("2025"). */
 export const CERTIFICATE_YEAR_PATTERN = /^(?:19|20)\d{2}$/;
+
+/*
+ * CMS phase 3c — the custom section: an Owner's own layout of one, two or
+ * three columns, each an ordered list of elements (a heading, text, buttons,
+ * an image, a video, a checklist, a spacer, a divider, an icon with text).
+ * Named choices only — no pixels, no positions — and every limit below is
+ * mirrored exactly by the frontend's `website.constants.ts` and proven at
+ * its boundary by the parity cases.
+ *
+ * | Limit                         | Value | Why                                                       |
+ * | ----------------------------- | ----- | --------------------------------------------------------- |
+ * | columns                       | 1–3   | the named layouts; more would not read on a laptop        |
+ * | elements per column           | 12    | one idea per section; 36 at most keeps a page's JSON small |
+ * | heading                       | 120   | a headline, not a paragraph                               |
+ * | text (multi-line, plain)      | 1500  | a few short paragraphs; longer copy belongs on its page   |
+ * | checklist items               | 1–10  | a scannable list                                          |
+ * | checklist item                | 120   | one line on a phone, two at most                          |
+ * | icon + text: title / text     | 80/240| the features' card proportions                            |
+ * | video title                   | 100   | names the play button and the player                      |
+ */
+/** How many columns each layout has. */
+export const CUSTOM_SECTION_LAYOUT_COLUMNS = { one: 1, two: 2, three: 3 } as const;
+export const CUSTOM_SECTION_LAYOUTS = ['one', 'two', 'three'] as const;
+/** Two columns only: equal halves, or one about twice the other. */
+export const CUSTOM_SECTION_RATIOS = ['equal', 'wideNarrow', 'narrowWide'] as const;
+/** Where shorter columns sit beside a taller one. */
+export const CUSTOM_SECTION_VERTICAL_ALIGNS = ['top', 'center'] as const;
+export const CUSTOM_ELEMENT_KINDS = [
+  'heading',
+  'text',
+  'button',
+  'image',
+  'video',
+  'checklist',
+  'spacer',
+  'divider',
+  'iconText',
+] as const;
+export const CUSTOM_HEADING_LEVELS = ['h2', 'h3'] as const;
+export const CUSTOM_SPACER_SIZES = ['small', 'medium', 'large'] as const;
+/** The frame an image element reserves (no layout shift): 4:3, 16:9, 1:1, 4:5. */
+export const CUSTOM_IMAGE_RATIOS = ['landscape', 'wide', 'square', 'portrait'] as const;
+export const MAX_CUSTOM_ELEMENTS_PER_COLUMN = 12;
+export const MAX_CUSTOM_HEADING_LENGTH = 120;
+export const MAX_CUSTOM_TEXT_LENGTH = 1500;
+export const MIN_CUSTOM_CHECKLIST_ITEMS = 1;
+export const MAX_CUSTOM_CHECKLIST_ITEMS = 10;
+export const MAX_CUSTOM_CHECKLIST_ITEM_LENGTH = 120;
+export const MAX_CUSTOM_ICON_TEXT_TITLE_LENGTH = 80;
+export const MAX_CUSTOM_ICON_TEXT_LENGTH = 240;
+export const MAX_CUSTOM_VIDEO_TITLE_LENGTH = 100;
 
 /** `courseSpotlight`: how many syllabus sections it may list — matches the frontend `MIN/MAX_SPOTLIGHT_MODULES`. */
 export const MIN_SPOTLIGHT_MODULES = 1;

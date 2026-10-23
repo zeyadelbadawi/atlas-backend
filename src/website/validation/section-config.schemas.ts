@@ -153,6 +153,23 @@ import {
   MAX_INTEREST_OPTIONS,
   MAX_INTEREST_SUCCESS_MESSAGE_LENGTH,
   MIN_COMPARISON_COLUMNS,
+  CUSTOM_ELEMENT_KINDS,
+  CUSTOM_HEADING_LEVELS,
+  CUSTOM_IMAGE_RATIOS,
+  CUSTOM_SECTION_LAYOUT_COLUMNS,
+  CUSTOM_SECTION_LAYOUTS,
+  CUSTOM_SECTION_RATIOS,
+  CUSTOM_SECTION_VERTICAL_ALIGNS,
+  CUSTOM_SPACER_SIZES,
+  MAX_CUSTOM_CHECKLIST_ITEM_LENGTH,
+  MAX_CUSTOM_CHECKLIST_ITEMS,
+  MAX_CUSTOM_ELEMENTS_PER_COLUMN,
+  MAX_CUSTOM_HEADING_LENGTH,
+  MAX_CUSTOM_ICON_TEXT_LENGTH,
+  MAX_CUSTOM_ICON_TEXT_TITLE_LENGTH,
+  MAX_CUSTOM_TEXT_LENGTH,
+  MAX_CUSTOM_VIDEO_TITLE_LENGTH,
+  MIN_CUSTOM_CHECKLIST_ITEMS,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -998,6 +1015,150 @@ export const certificatesSectionSchema = z.object({
   items: z.array(certificateItemSchema).max(MAX_CERTIFICATES),
 });
 
+/*
+ * CMS phase 3c — the custom section, mirrored field for field by the
+ * frontend's identically named schemas (the parity cases prove it,
+ * including that every field survives the parse). Each element is one
+ * branch of a discriminated union on `kind`, so an unknown kind is refused
+ * before its fields are read, and every value is the same contract its
+ * ready-made sections use: the section button (`websiteCtaSchema`, checked by
+ * the reference validator), the image value, the YouTube id, the curated
+ * icons. Text is plain (no markup is ever rendered from it); line breaks are
+ * the only formatting.
+ */
+const customHeadingElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('heading'),
+  text: localizedRequired(MAX_CUSTOM_HEADING_LENGTH),
+  /** The section's title, when it has one, is the h2 above. */
+  level: z.enum(CUSTOM_HEADING_LEVELS),
+});
+
+const customTextElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('text'),
+  /** Multi-line plain text: a blank line starts a new paragraph. */
+  text: localizedRequired(MAX_CUSTOM_TEXT_LENGTH),
+});
+
+/** One to three buttons in a row, in the section buttons' named slots. */
+const customButtonElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('button'),
+  cta: websiteCtaSchema,
+  secondaryCta: websiteCtaSchema.optional(),
+  tertiaryCta: websiteCtaSchema.optional(),
+});
+
+/** Empty saves (an image not chosen yet); the public site leaves it out. */
+const customImageElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('image'),
+  image: imageValueSchema.optional(),
+  imageAlt: localizedOptional(MAX_SHORT_TEXT).optional(),
+  ratio: z.enum(CUSTOM_IMAGE_RATIOS).optional(),
+});
+
+/** Empty saves (a video not chosen yet); the public site leaves it out. */
+const customVideoElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('video'),
+  videoId: youTubeVideoIdSchema,
+  title: localizedOptional(MAX_CUSTOM_VIDEO_TITLE_LENGTH).optional(),
+  poster: imageValueSchema.optional(),
+});
+
+const customChecklistElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('checklist'),
+  items: z
+    .array(
+      z.object({
+        id: z.string(),
+        text: localizedRequired(MAX_CUSTOM_CHECKLIST_ITEM_LENGTH),
+      }),
+    )
+    .min(MIN_CUSTOM_CHECKLIST_ITEMS)
+    .max(MAX_CUSTOM_CHECKLIST_ITEMS),
+});
+
+const customSpacerElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('spacer'),
+  size: z.enum(CUSTOM_SPACER_SIZES),
+});
+
+const customDividerElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('divider'),
+});
+
+const customIconTextElementSchema = z.object({
+  id: z.string(),
+  kind: z.literal('iconText'),
+  /** One of the features' curated icons. */
+  icon: z.enum(FEATURE_ICON_OPTIONS as [string, ...string[]]),
+  title: localizedRequired(MAX_CUSTOM_ICON_TEXT_TITLE_LENGTH),
+  text: localizedOptional(MAX_CUSTOM_ICON_TEXT_LENGTH).optional(),
+});
+
+const customElementSchema = z.discriminatedUnion('kind', [
+  customHeadingElementSchema,
+  customTextElementSchema,
+  customButtonElementSchema,
+  customImageElementSchema,
+  customVideoElementSchema,
+  customChecklistElementSchema,
+  customSpacerElementSchema,
+  customDividerElementSchema,
+  customIconTextElementSchema,
+]);
+
+// Every kind the constants name has a branch, and no branch is unnamed.
+type CustomElementKind = z.infer<typeof customElementSchema>['kind'];
+const _customKindsMatch: Record<CustomElementKind, true> &
+  Record<(typeof CUSTOM_ELEMENT_KINDS)[number], true> = {
+  heading: true,
+  text: true,
+  button: true,
+  image: true,
+  video: true,
+  checklist: true,
+  spacer: true,
+  divider: true,
+  iconText: true,
+};
+void _customKindsMatch;
+
+const customColumnSchema = z.object({
+  id: z.string(),
+  elements: z.array(customElementSchema).max(MAX_CUSTOM_ELEMENTS_PER_COLUMN),
+});
+
+/** An Owner's own section: a layout of columns, each an ordered list of elements. */
+export const customSectionSchema = z
+  .object({
+    /** Optional: the section's h2 when present. */
+    title: localizedOptional(MAX_SHORT_TEXT).optional(),
+    description: localizedOptional(MAX_LONG_TEXT).optional(),
+    layout: z.enum(CUSTOM_SECTION_LAYOUTS),
+    /** Two columns only; absent = equal. */
+    ratio: z.enum(CUSTOM_SECTION_RATIOS).optional(),
+    /** Absent = top. */
+    verticalAlign: z.enum(CUSTOM_SECTION_VERTICAL_ALIGNS).optional(),
+    columns: z.array(customColumnSchema).min(1).max(3),
+  })
+  .superRefine((config, ctx) => {
+    // The layout names how many columns there are: the two always agree.
+    if (config.columns.length !== CUSTOM_SECTION_LAYOUT_COLUMNS[config.layout]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'validation:customColumnCount',
+        path: ['columns'],
+      });
+    }
+  });
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -1032,6 +1193,7 @@ const SECTION_CONFIG_SCHEMAS = {
   interestForm: interestFormSectionSchema,
   announcementBar: announcementBarSectionSchema,
   comparison: comparisonSectionSchema,
+  custom: customSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -1225,6 +1387,11 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('certificates'),
     config: certificatesSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('custom'),
+    config: customSectionSchema,
   }),
 ]);
 
