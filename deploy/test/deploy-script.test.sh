@@ -563,6 +563,33 @@ check "the healthy pin pruned the unrecorded image" \
 check "every record's images survive the prune" \
   bash -c "for f in '$W/.last-good' '$W/.last-good.1' '$W/.last-good.2' '$W/.last-good.3'; do [ -f \"\$f\" ] || continue; for d in \$(sed -n 's/^\(BACKEND\|CADDY\)_IMAGE=//p' \"\$f\"); do docker image inspect \"\$d\" >/dev/null 2>&1 || docker image inspect \"sha256:\${d##*@sha256:}\" >/dev/null 2>&1 || exit 1; done; done"
 
+# =============================================================================
+echo "# 11. nameless images: only the ledger's are application images (23 Oct 2026)"
+# Docker's containerd image store drops every name of an image once its tag
+# moves, so production's old releases had no repository left to be
+# recognised by and were never pruned (30 GB). The ledger records the image
+# IDs the application services ran; a nameless image is pruned only if the
+# ledger names it. Built here with no tag at all: nameless in both stores.
+NAMELESS_APP=$(docker build -q --build-arg VERSION=nameless-app "$B/backend")
+NAMELESS_OTHER=$(docker build -q --build-arg VERSION=nameless-other "$B/backend")
+echo "$NAMELESS_APP" >>"$W/.app-images"
+check "--pin-frontend again succeeds" run_deploy "$W/log22" --pin-frontend pinme
+check "the ledger records the image the running backend uses" \
+  grep -qxF "$(running_image backend)" "$W/.app-images"
+check "the ledger records the image the running caddy uses" \
+  grep -qxF "$(running_image caddy)" "$W/.app-images"
+check "a nameless image the ledger names is pruned" \
+  bash -c "! docker image inspect '$NAMELESS_APP' >/dev/null 2>&1"
+check "a nameless image the ledger does not name is never pruned" \
+  docker image inspect "$NAMELESS_OTHER"
+check "the ledger drops the image it pruned" \
+  bash -c "! grep -qxF '$NAMELESS_APP' '$W/.app-images'"
+check "every record's images still survive the prune" \
+  bash -c "for f in '$W/.last-good' '$W/.last-good.1' '$W/.last-good.2' '$W/.last-good.3'; do [ -f \"\$f\" ] || continue; for d in \$(sed -n 's/^\(BACKEND\|CADDY\)_IMAGE=//p' \"\$f\"); do docker image inspect \"\$d\" >/dev/null 2>&1 || docker image inspect \"sha256:\${d##*@sha256:}\" >/dev/null 2>&1 || exit 1; done; done"
+check "postgres/redis images are still untouched" \
+  bash -c "docker image inspect '$REG/postgres:16-alpine' >/dev/null && docker image inspect '$REG/redis:7-alpine' >/dev/null"
+docker image rm -f "$NAMELESS_OTHER" >/dev/null 2>&1 || true
+
 echo
 echo "# $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
