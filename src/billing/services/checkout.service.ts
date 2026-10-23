@@ -33,6 +33,11 @@ import { createCheckoutSchema } from '../validation/checkout.schemas';
 import type { CreateCheckoutInput } from '../validation/checkout.schemas';
 import { parseOrThrow } from '../../common/validation/zod-violations.util';
 import { toMinorUnits } from '../utils/money.util';
+import {
+  expectedPurchasePeriodStart,
+  foundingPriceFor,
+  readFoundingMembership,
+} from '../../founding/founding-lock';
 import { CHECKOUT_EXPIRY_MINUTES } from '../dto/billing.constants';
 import { toCheckoutResponse } from '../dto/checkout.contract';
 import type {
@@ -61,7 +66,7 @@ export class CheckoutService {
   ): Promise<CheckoutResponse> {
     const input = parseOrThrow(createCheckoutSchema, payload);
 
-    const snapshot = await this.buildSnapshot(input);
+    let snapshot = await this.buildSnapshot(input);
 
     return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const existing = await this.checkoutsRepository.findByIdempotencyKey(
@@ -108,6 +113,29 @@ export class CheckoutService {
         const target = await this.plansRepository.findByKey(input.target.planKey);
         if (target?.family === 'premium' && target.displayOrder <= 0) {
           throw new NotFoundException({ messageKey: 'errors.checkout.planNotFound' });
+        }
+
+        // B2 — Founding Academies. The locked annual price comes from THIS
+        // organization's membership row (read under its own RLS), never
+        // from the request: a member and a non-member send the same body,
+        // and only a member's row changes the price frozen below.
+        const lock = await readFoundingMembership(tx, organizationId);
+        const founding =
+          target &&
+          foundingPriceFor(lock, {
+            planId: target.id,
+            billingCycle: snapshot.billingCycle,
+            periodStart: expectedPurchasePeriodStart(current, now),
+          });
+        if (founding && lock) {
+          snapshot = {
+            ...snapshot,
+            price: {
+              amountMinorUnits: Number(toMinorUnits(founding.amount)),
+              currency: founding.currency,
+            },
+            founding: { lockEndsAt: lock.lockEndsAt.toISOString() },
+          };
         }
       }
 

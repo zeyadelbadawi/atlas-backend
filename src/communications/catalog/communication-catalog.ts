@@ -1886,6 +1886,27 @@ const CATALOG = {
     messageKey: 'notifications:events.lifecycleSubscriptionPriceChangeNotice.message',
     actionUrl: () => TENANT_SUBSCRIPTION_PATH,
   },
+  // B2 — a Founding Academy's next renewal leaves its locked price and the
+  // catalog price differs: told once per renewal, ~30 days ahead, by
+  // `FoundingNoticeService` on the subscription sweep. Transactional like
+  // the catalog price notice above: it is about what they will be charged.
+  'lifecycle.founding.renewal_price_notice': {
+    category: 'transactional',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'high',
+    notificationType: 'billing',
+    retentionClass: 'extended',
+    dedupe: ({ entity, values }) =>
+      `founding_renewal_price:${entity.id}:${str(values, 'periodEndAt')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'lifecycle.founding.renewal_price_notice',
+    titleKey: 'notifications:events.lifecycleFoundingRenewalPriceNotice.title',
+    messageKey: 'notifications:events.lifecycleFoundingRenewalPriceNotice.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+  },
   // S9 — the cancellation actually took effect.
   // B0-BIL-13 — a plan limit the owner is close to or at
   // (`UsageLimitWarningService`, after each usage recompute). Once per
@@ -2644,6 +2665,30 @@ const CATALOG = {
     // The visitor's details go to the owner's inbox by email only; the
     // feed row keeps `topic` and nothing that identifies the visitor.
     personalValues: ['name', 'email', 'organizationName', 'message'],
+  },
+  // B2 — a Platform Owner's message to Founding Academy owners (one, some
+  // or all active), written in both languages. Lifecycle: it is about the
+  // customer's programme membership (setup, price lock), so it is not
+  // silenced by the engagement toggle, and it sends under the lifecycle
+  // budget line (85 %), never the reserve kept for security email. Every
+  // send is audited per recipient. The feed row keeps no subject or body.
+  'platform.founding.message': {
+    category: 'lifecycle',
+    audience: 'staff',
+    channels: { inApp: 'always', email: 'always' },
+    priority: 'medium',
+    notificationType: 'billing',
+    retentionClass: 'standard',
+    dedupe: ({ entity, values }) =>
+      `founding_message:${entity.id}:${str(values, 'sendId')}`,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'platform.founding.message',
+    titleKey: 'notifications:events.platformFoundingMessage.title',
+    messageKey: 'notifications:events.platformFoundingMessage.message',
+    actionUrl: () => TENANT_SUBSCRIPTION_PATH,
+    personalValues: ['subjectEn', 'bodyEn', 'subjectAr', 'bodyAr'],
   },
   // B0-SUP-01 — Platform Owner work alerts (`PlatformOwnerAlertService`).
   // Each goes to every active Platform Owner, in-app + email, after the

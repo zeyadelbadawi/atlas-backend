@@ -548,6 +548,8 @@ model Organization {
   communicationCampaigns CommunicationCampaign[]
   emailUsagePeriods      TenantEmailUsagePeriod[]
   emailUsageLedger       TenantEmailUsageLedger[]
+  /// B2 — Founding Academies: at most one non-revoked membership (partial unique index).
+  foundingMemberships    FoundingMembership[]
 
   @@unique([nameKey])
   @@index([status])
@@ -1007,11 +1009,13 @@ model Plan {
   createdAt            DateTime   @default(now()) @map("created_at")
   updatedAt            DateTime   @updatedAt @map("updated_at")
 
-  subscriptions      TenantSubscription[]
+  subscriptions       TenantSubscription[]
   /// Phase P13 — Course Commerce (master plan §4.2's user-directed
   /// plan-tier commission extension). Optional 1:1 — see
   /// `PlanCommissionSettings`'s own doc comment.
-  commissionSettings PlanCommissionSettings?
+  commissionSettings  PlanCommissionSettings?
+  /// B2 — founding memberships whose price lock is for this plan.
+  foundingMemberships FoundingMembership[]
 
   @@index([status, displayOrder])
   /// P64 Phase 2 (D10) — the catalog is read by family and tier, not by key,
@@ -3060,10 +3064,68 @@ model PlatformContactSubmission {
   preferredChannel        String?                         @map("preferred_channel") @db.VarChar(16)
   /// B0-ANL-04 (part 2) — UTM values, referrer domain, landing template.
   attribution             Json?
+  /// B2 — the founding membership created from this application, if any.
+  foundingMemberships     FoundingMembership[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@map("platform_contact_submissions")
+}
+
+/// B2 — Founding Academies. A membership's status: `active` while the lock
+/// can still apply, `ended` once the lock end has passed (the seat stays
+/// taken), `revoked` by a Platform Owner (the seat is released).
+enum FoundingMembershipStatus {
+  active
+  revoked
+  ended
+
+  @@map("founding_membership_status")
+}
+
+/// B2 — Founding Academies: one of the first 20 paying academies, whose
+/// annual price for one plan is locked for 24 months. Platform Owner data:
+/// written only by Platform Owners (RLS); the organization may read its
+/// own row (the owner's billing screen and checkout pricing).
+///
+/// The seat number is unique among non-revoked rows and CHECKed to 1..20
+/// (partial unique index + CHECK in the migration); seats are assigned
+/// under a transaction-scoped advisory lock, so a race cannot pass 20.
+/// Checkout and renewal read the lock server-side from this row only.
+model FoundingMembership {
+  id                        String                     @id @default(uuid())
+  organizationId            String                     @map("organization_id")
+  organization              Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  seatNumber                Int                        @map("seat_number")
+  /// The catalog plan (family/tier) the locked price is for.
+  planId                    String                     @map("plan_id")
+  plan                      Plan                       @relation(fields: [planId], references: [id])
+  /// The plan's annual catalog price when locked (or re-locked on a plan change).
+  lockedAmount              Decimal                    @map("locked_amount") @db.Decimal(12, 2)
+  lockedCurrency            String                     @map("locked_currency") @db.VarChar(3)
+  lockStartsAt              DateTime                   @map("lock_starts_at")
+  /// `lockStartsAt` + 24 calendar months. A renewal period that STARTS before it is priced at the lock.
+  lockEndsAt                DateTime                   @map("lock_ends_at")
+  status                    FoundingMembershipStatus   @default(active)
+  revokedAt                 DateTime?                  @map("revoked_at")
+  revokedReason             String?                    @map("revoked_reason") @db.VarChar(500)
+  sourceContactSubmissionId String?                    @map("source_contact_submission_id")
+  sourceContactSubmission   PlatformContactSubmission? @relation(fields: [sourceContactSubmissionId], references: [id], onDelete: SetNull)
+  /// Concierge setup hours used so far (the 6-hour cap is shown, not enforced).
+  conciergeHoursUsed        Decimal                    @default(0) @map("concierge_hours_used") @db.Decimal(5, 2)
+  notes                     String?                    @db.VarChar(4000)
+  /// The period end the "renewal at catalog price" notice was sent for (once per renewal).
+  priceNoticeSentFor        DateTime?                  @map("price_notice_sent_for")
+  createdByUserId           String                     @map("created_by_user_id")
+  updatedByUserId           String                     @map("updated_by_user_id")
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                   @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([planId])
+  @@index([sourceContactSubmissionId])
+  @@map("founding_memberships")
 }
 
 /// Matches `Forum['status']` (`forum.types.ts`) exactly.

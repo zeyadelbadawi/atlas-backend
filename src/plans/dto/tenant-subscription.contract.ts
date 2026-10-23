@@ -59,6 +59,32 @@ export interface TenantSubscriptionResponse {
     readonly noticedAt: string;
     readonly effectiveAt?: string;
   };
+  /**
+   * B2 — present while this organization is a Founding Academy (its seat is
+   * held: active, or ended with the lock over). Billing owners only — the
+   * member view drops it with every other price.
+   */
+  readonly founding?: TenantFoundingResponse;
+}
+
+export interface TenantFoundingResponse {
+  readonly status: 'active' | 'ended';
+  readonly seatNumber: number;
+  readonly planId: string;
+  readonly lockedPrice: { readonly amount: number; readonly currency: string };
+  readonly lockStartsAt: string;
+  readonly lockEndsAt: string;
+  /**
+   * What the next yearly renewal of the locked plan would be charged — the
+   * same server rule checkout applies. `locked: false` once the renewal
+   * falls after the lock end (catalog price).
+   */
+  readonly nextRenewal?: {
+    readonly amount: number;
+    readonly currency: string;
+    readonly locked: boolean;
+    readonly periodStartsAt: string;
+  };
 }
 
 function describePriceChangeNotice(
@@ -110,6 +136,7 @@ export function toMemberSubscriptionView(
     ...subscription,
     plan: withoutPlanPricing(subscription.plan),
     priceChangeNotice: undefined,
+    founding: undefined,
   };
 }
 

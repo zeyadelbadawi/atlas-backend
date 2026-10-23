@@ -11,6 +11,14 @@
  * unmodified) already proved organization membership before any of these
  * run; RLS proves it again, independently.
  */
+import {
+  catalogAnnualPrice,
+  expectedPurchasePeriodStart,
+  foundingPriceFor,
+  readFoundingMembership,
+  type FoundingLock,
+} from '../../founding/founding-lock';
+import type { TenantFoundingResponse } from '../dto/tenant-subscription.contract';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { resolveSubscriptionLimits } from '../utils/granted-limits.util';
@@ -151,7 +159,7 @@ export class TenantSubscriptionService {
   }
 
   async getSubscription(organizationId: string): Promise<TenantSubscriptionResponse> {
-    const { subscription, scheduledPlanName } =
+    const { subscription, scheduledPlanName, membership, lockedPlanPricing } =
       await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
         const row = await this.tenantSubscriptionsRepository.findByOrganizationId(
           tx,
@@ -160,7 +168,18 @@ export class TenantSubscriptionService {
         const name = row?.scheduledPlanId
           ? await this.tenantSubscriptionsRepository.findPlanName(tx, row.scheduledPlanId)
           : null;
-        return { subscription: row, scheduledPlanName: name ?? undefined };
+        // B2 — read under the organization's own RLS (its row only).
+        const membership = row ? await readFoundingMembership(tx, organizationId) : null;
+        const lockedPlan =
+          membership && membership.planId !== row?.planId
+            ? await tx.plan.findUnique({ where: { id: membership.planId } })
+            : null;
+        return {
+          subscription: row,
+          scheduledPlanName: name ?? undefined,
+          membership,
+          lockedPlanPricing: lockedPlan?.pricing ?? row?.plan.pricing,
+        };
       });
 
     if (!subscription) {
@@ -171,7 +190,17 @@ export class TenantSubscriptionService {
       throw new NotFoundException({ messageKey: 'errors.tenant.noSubscription' });
     }
 
-    return toTenantSubscriptionResponse(subscription, undefined, scheduledPlanName);
+    const response = toTenantSubscriptionResponse(
+      subscription,
+      undefined,
+      scheduledPlanName,
+    );
+    return membership
+      ? {
+          ...response,
+          founding: describeFounding(membership, subscription, lockedPlanPricing),
+        }
+      : response;
   }
 
   /**
@@ -260,4 +289,38 @@ export class TenantSubscriptionService {
 
     return toTenantUsageResponse(usage, entitlements);
   }
+}
+
+/** B2 — the owner's view of their Founding Academy lock and next renewal price. */
+function describeFounding(
+  lock: FoundingLock,
+  subscription: { status: string; currentPeriodEnd: Date | null },
+  lockedPlanPricing: unknown,
+  now: Date = new Date(),
+): TenantFoundingResponse {
+  const periodStart = expectedPurchasePeriodStart(subscription, now);
+  const locked = foundingPriceFor(lock, {
+    planId: lock.planId,
+    billingCycle: 'yearly',
+    periodStart,
+  });
+  const price = locked ?? catalogAnnualPrice(lockedPlanPricing);
+  return {
+    status: lock.status === 'ended' ? 'ended' : 'active',
+    seatNumber: lock.seatNumber,
+    planId: lock.planId,
+    lockedPrice: { amount: lock.lockedAmount, currency: lock.lockedCurrency },
+    lockStartsAt: lock.lockStartsAt.toISOString(),
+    lockEndsAt: lock.lockEndsAt.toISOString(),
+    ...(price
+      ? {
+          nextRenewal: {
+            amount: price.amount,
+            currency: price.currency,
+            locked: locked !== null,
+            periodStartsAt: periodStart.toISOString(),
+          },
+        }
+      : {}),
+  };
 }
