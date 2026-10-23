@@ -4,7 +4,7 @@
  * never accepted from a client — the locked price is always the plan's
  * live annual catalog price at the moment of the action.
  */
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -125,6 +125,8 @@ export class UpdateFoundingMembershipDto {
 }
 
 export class RevokeFoundingMembershipDto {
+  // Trim first so a whitespace-only reason fails MinLength.
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MinLength(3)
   @MaxLength(FOUNDING_REASON_MAX)

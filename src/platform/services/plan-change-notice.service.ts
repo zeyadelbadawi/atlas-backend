@@ -218,22 +218,24 @@ export class PlanChangeNoticeService {
   ): Promise<'notified' | 'cleared' | 'unchanged'> {
     const scheduled = row.scheduledPlanId === after.id;
     const cycle = renewalCycleFor(row.billingCycle, after.pricing);
-    const lockedPrice = foundingPriceFor(lock, {
-      planId: after.id,
-      billingCycle: cycle,
-      periodStart: expectedPurchasePeriodStart(row, now),
-      catalog: catalogAnnualPrice(after.pricing),
-    });
     // The renewal price this customer will actually be charged, before and
-    // after the edit: the locked price on both sides while the lock covers
-    // their next renewal, so only a limit change can produce a notice.
-    const lockedPricing = lockedPrice
-      ? {
-          amount: lockedPrice.amount,
-          currency: lockedPrice.currency,
-          billingCycle: 'yearly',
-        }
-      : null;
+    // after the edit, each side from its own catalog (a catalog below the
+    // lock wins): the locked price on both sides while the lock covers their
+    // next renewal, so only a limit change or a real change can notify.
+    const periodStart = expectedPurchasePeriodStart(row, now);
+    const lockedPricingFor = (pricing: unknown) => {
+      const price = foundingPriceFor(lock, {
+        planId: after.id,
+        billingCycle: cycle,
+        periodStart,
+        catalog: catalogAnnualPrice(pricing),
+      });
+      return price
+        ? { amount: price.amount, currency: price.currency, billingCycle: 'yearly' }
+        : null;
+    };
+    const lockedBefore = lockedPricingFor(before.pricing);
+    const lockedAfter = lockedPricingFor(after.pricing);
     // What the subscriber holds for the plan they renew into. A row with
     // no recorded grant follows the live catalog, so a limit edit has
     // ALREADY reached it — there is no future limit change to announce.
@@ -245,8 +247,8 @@ export class PlanChangeNoticeService {
       planId: after.id,
       planVersion: after.version,
       billingCycle: cycle,
-      previousPricing: lockedPricing ?? before.pricing,
-      nextPricing: lockedPricing ?? after.pricing,
+      previousPricing: lockedBefore ?? before.pricing,
+      nextPricing: lockedAfter ?? after.pricing,
       currentLimits,
       nextLimits: after.limits,
       pending,

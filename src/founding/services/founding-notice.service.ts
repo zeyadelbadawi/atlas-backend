@@ -154,6 +154,8 @@ export class FoundingNoticeService {
       if (row.priceNoticeSentFor?.getTime() === periodEnd.getTime()) continue;
 
       const lock = toFoundingLock(row);
+      // The lock only ever priced its own plan; another plan never paid it.
+      if (sub.planId !== lock.planId) continue;
       // Only a period that began inside the lock was at the locked price.
       const periodStart = sub.currentPeriodStart ?? row.lockStartsAt;
       if (periodStart.getTime() >= lock.lockEndsAt.getTime()) continue;
