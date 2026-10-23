@@ -102,6 +102,35 @@ describe('sample social proof (plan §D.4)', () => {
     ]);
   });
 
+  it('strips sample video reviews too (CMS phase 3d, batch D), keeping real ones', () => {
+    const reviews = {
+      id: 'vt',
+      type: 'videoTestimonials',
+      config: {
+        title: { en: 'Reviews', ar: '' },
+        items: [
+          { id: 'starter', videoId: '', name: 'Sample', sample: true },
+          { id: 'real', videoId: 'dQw4w9WgXcQ', name: 'Mona' },
+        ],
+      },
+    };
+    const [stripped] = stripSampleContent([reviews]) as {
+      config: { items: { id: string }[] };
+    }[];
+    expect(stripped.config.items.map((i) => i.id)).toEqual(['real']);
+    expect(
+      collectSampleContent([{ id: 'p', title: 'Home', sections: [reviews] }]),
+    ).toEqual([
+      {
+        pageId: 'p',
+        pageTitle: 'Home',
+        sectionId: 'vt',
+        sectionType: 'videoTestimonials',
+        sampleItems: 1,
+      },
+    ]);
+  });
+
   it('leaves a `sample` key on any other section type alone', () => {
     const logos = {
       id: 'lg',

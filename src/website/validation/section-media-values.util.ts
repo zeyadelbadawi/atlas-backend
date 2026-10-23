@@ -1,6 +1,7 @@
 /**
  * CMS phase 3d (batch A) — the two section values that are not plain text:
- * a `video` section's YouTube video id and a `countdown` section's deadline.
+ * a `video` section's YouTube video id and a `countdown` section's deadline
+ * (batch D adds a `downloads` item's link).
  *
  * A field-for-field backend reproduction of the frontend's
  * `section-media-values.utils.ts`; the shared parity cases
@@ -8,8 +9,10 @@
  */
 import {
   COUNTDOWN_DEADLINE_PATTERN,
+  MEDIA_ASSET_PATH_PATTERN,
   YOUTUBE_VIDEO_ID_PATTERN,
 } from '../constants/website.constants';
+import { isSafeExternalUrl } from './url-safety.util';
 
 /** The hosts a YouTube link may use (after `www.` / `m.` / `music.`). */
 const YOUTUBE_HOSTS: ReadonlySet<string> = new Set([
@@ -89,4 +92,24 @@ export function isCountdownDeadline(value: string): boolean {
 /** Empty (no deadline chosen yet — the public site leaves the section out) or a valid deadline. */
 export function isCountdownDeadlineOrEmpty(value: string): boolean {
   return value === '' || isCountdownDeadline(value);
+}
+
+/**
+ * CMS phase 3d (batch D) — a `downloads` item's link: a file from the
+ * academy's media library (the relative `/api/v1/public/media/…` address the
+ * library hands out, PDFs included) or a web page/file elsewhere (`https://`,
+ * e.g. Google Drive) that `isSafeExternalUrl` allows. Only http(s): a
+ * `mailto:`/`tel:` link is not a download. Empty is a link not added yet: it
+ * saves, and the public site leaves the item out until it has one.
+ */
+export function isDownloadLinkOrEmpty(value: string): boolean {
+  if (value === '') return true;
+  if (MEDIA_ASSET_PATH_PATTERN.test(value)) return true;
+  if (!isSafeExternalUrl(value)) return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
 }

@@ -660,6 +660,44 @@ describe('PublicWebsiteService.getPublishedPages — content library', () => {
     expect(JSON.stringify(cacheService.setPages.mock.calls[0])).not.toContain('sample');
   });
 
+  it('never sends a sample video review to visitors (CMS phase 3d, batch D)', async () => {
+    const { service, cacheService } = build({
+      pages: [
+        page([
+          {
+            id: 'reviews-1',
+            type: 'videoTestimonials',
+            config: {
+              title: { en: 'Hear it from our students', ar: '' },
+              items: [
+                {
+                  id: 'starter-1',
+                  videoId: '',
+                  name: 'Starter parent',
+                  role: { en: 'Parent', ar: '' },
+                  sample: true,
+                },
+                {
+                  id: 'real-1',
+                  videoId: 'dQw4w9WgXcQ',
+                  name: 'Mona',
+                  role: { en: 'Parent', ar: '' },
+                },
+              ],
+            },
+          },
+        ]),
+      ],
+    });
+
+    const [result] = (await service.getPublishedPages(ACADEMY_ID))!;
+    const [reviews] = result.sections as { config: { items: { id: string }[] } }[];
+    expect(reviews.config.items.map((item) => item.id)).toEqual(['real-1']);
+    expect(JSON.stringify(cacheService.setPages.mock.calls[0])).not.toContain(
+      'Starter parent',
+    );
+  });
+
   it('caches under the Academy’s library revision, and a hit skips the database', async () => {
     const { service, cacheService, websitePagesRepository } = build({
       pages: [page([])],

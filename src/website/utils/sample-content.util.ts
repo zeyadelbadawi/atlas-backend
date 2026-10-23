@@ -19,6 +19,8 @@ export const SAMPLE_ITEM_SECTION_TYPES: readonly string[] = [
   'testimonials',
   'results',
   'schedule',
+  // CMS phase 3d (batch D) — a starter video review is an invented one.
+  'videoTestimonials',
 ];
 
 interface SectionLike {
@@ -49,7 +51,7 @@ function sampleItemCount(section: SectionLike | null | undefined): number {
     .length;
 }
 
-/** The same sections with every `sample: true` item (testimonial, result, schedule row) removed. Other sections are returned as-is (same object). */
+/** The same sections with every `sample: true` item (testimonial, result, schedule row, video review) removed. Other sections are returned as-is (same object). */
 export function stripSampleContent(sections: readonly unknown[]): unknown[] {
   return sections.map((raw) => {
     const section = raw as SectionLike;
