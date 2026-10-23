@@ -42,6 +42,15 @@ case "$WEBHOOK" in
   "") fail "ALERT_SLACK_WEBHOOK_URL missing from .env" ;;
   *) fail "ALERT_SLACK_WEBHOOK_URL present but not a hooks.slack.com URL" ;;
 esac
+# B0-OPS-09 — error reporting is optional (off unless SENTRY_DSN is set), so
+# its absence is INFO, not FAIL. Presence and host shape only, never the DSN.
+SENTRY=$(env_value SENTRY_DSN)
+case "$SENTRY" in
+  https://*@*/*) info "SENTRY_DSN present (Sentry DSN shape; backend 5xx errors are reported)" ;;
+  "") info "SENTRY_DSN not set (backend error reporting to Sentry is off)" ;;
+  *) fail "SENTRY_DSN present but not a Sentry DSN shape (the backend refuses to boot with it)" ;;
+esac
+unset SENTRY
 for f in metrics_scrape_token slack_webhook_url; do
   p="monitoring/secrets/$f"
   if [ -s "$p" ]; then pass "$p exists (mode $(stat -c %a "$p"))"; else fail "$p missing or empty"; fi

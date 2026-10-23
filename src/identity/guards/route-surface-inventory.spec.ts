@@ -229,6 +229,8 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/media/academies/:academyId/:fileName':
     'published/public-tier assets, or a signed link (W1)',
   'GET public/plans': 'public price list',
+  // B0-OPS-09 — external uptime probe; `ok`/`unavailable` only.
+  'GET public/health': 'public uptime check; status word only, no details',
   'GET public/signup-options': 'which signup paths are enabled',
   'POST public/contact': 'marketing contact form; rate-limited',
   'GET verify/:code': 'public certificate verification by unguessable code',
