@@ -122,6 +122,22 @@ import {
   MAX_WHATSAPP_BAR_TITLE_LENGTH,
   MIN_PRICING_PLANS,
   TIME_ZONE_PATTERN,
+  ANNOUNCEMENT_TONES,
+  COMPARISON_CELL_VALUES,
+  INTEREST_FIELD_MODES,
+  MAX_ANNOUNCEMENT_TEXT_LENGTH,
+  MAX_COMPARISON_CELL_TEXT_LENGTH,
+  MAX_COMPARISON_COLUMN_LABEL_LENGTH,
+  MAX_COMPARISON_COLUMNS,
+  MAX_COMPARISON_DESCRIPTION_LENGTH,
+  MAX_COMPARISON_ROW_LABEL_LENGTH,
+  MAX_COMPARISON_ROWS,
+  MAX_INTEREST_CHOICE_LABEL_LENGTH,
+  MAX_INTEREST_FORM_DESCRIPTION_LENGTH,
+  MAX_INTEREST_OPTION_LENGTH,
+  MAX_INTEREST_OPTIONS,
+  MAX_INTEREST_SUCCESS_MESSAGE_LENGTH,
+  MIN_COMPARISON_COLUMNS,
 } from '../constants/website.constants';
 import {
   DEFAULT_PUBLIC_WEBSITE_LOCALE,
@@ -744,6 +760,112 @@ export const countdownSectionSchema = z.object({
   tertiaryCta: websiteCtaSchema.optional(),
 });
 
+/*
+ * CMS phase 3d (batch C) — three sections shared by every theme, each
+ * mirroring the frontend's identically named schema field for field (the
+ * parity cases prove it, including that every field survives the parse).
+ */
+
+const interestOptionSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_INTEREST_OPTION_LENGTH),
+});
+
+/**
+ * "Register your interest": a lead form that reaches the academy's
+ * Messages through the contact form's own endpoint
+ * (`POST public/websites/:academyId/contact`, `kind: 'interest'`). Name and
+ * phone are always asked; email, the choice list and a message are each
+ * hidden, optional or required. A choice list with no options is not shown
+ * (and the public endpoint treats it as hidden). The endpoint reads this
+ * config from the PUBLISHED page to decide what it accepts: a chosen option
+ * must be one of `options` by id.
+ */
+export const interestFormSectionSchema = z.object({
+  title: localizedRequired(MAX_SHORT_TEXT),
+  description: localizedOptional(MAX_INTEREST_FORM_DESCRIPTION_LENGTH).optional(),
+  emailField: z.enum(INTEREST_FIELD_MODES),
+  choiceField: z.enum(INTEREST_FIELD_MODES),
+  /** The choice list's label ("Course", "Grade"); empty → "Your choice". */
+  choiceLabel: localizedOptional(MAX_INTEREST_CHOICE_LABEL_LENGTH).optional(),
+  options: z.array(interestOptionSchema).max(MAX_INTEREST_OPTIONS),
+  messageField: z.enum(INTEREST_FIELD_MODES),
+  /** Empty → "Send". */
+  submitLabel: localizedOptional(MAX_CTA_LABEL_LENGTH).optional(),
+  /** Shown (and announced) once the form is sent; empty → a standard thank-you. */
+  successMessage: localizedOptional(MAX_INTEREST_SUCCESS_MESSAGE_LENGTH).optional(),
+});
+
+/**
+ * A slim notice strip ("Registration for 2026/2027 is open"): a short line,
+ * an optional single button (the section button contract, in the `cta`
+ * slot) and a named tone each theme draws from its own palette. Never
+ * dismissible and never moving, so an edge-cached page is the same for
+ * every visitor.
+ */
+export const announcementBarSectionSchema = z.object({
+  text: localizedRequired(MAX_ANNOUNCEMENT_TEXT_LENGTH),
+  tone: z.enum(ANNOUNCEMENT_TONES),
+  cta: websiteCtaSchema.optional(),
+});
+
+const comparisonColumnSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_COMPARISON_COLUMN_LABEL_LENGTH),
+  /** The column to draw attention to; the editor keeps it to one (the site draws the first). */
+  highlighted: z.boolean().optional(),
+});
+
+/** One cell: ✓, ✗ or a short text. `column` is the id of the column it sits in. */
+const comparisonCellSchema = z.discriminatedUnion('value', [
+  z.object({ column: z.string().min(1), value: z.literal(COMPARISON_CELL_VALUES[0]) }),
+  z.object({ column: z.string().min(1), value: z.literal(COMPARISON_CELL_VALUES[1]) }),
+  z.object({
+    column: z.string().min(1),
+    value: z.literal(COMPARISON_CELL_VALUES[2]),
+    text: localizedRequired(MAX_COMPARISON_CELL_TEXT_LENGTH),
+  }),
+]);
+
+const comparisonRowSchema = z.object({
+  id: z.string().min(1, 'validation:required'),
+  label: localizedRequired(MAX_COMPARISON_ROW_LABEL_LENGTH),
+  /** At most one per column; a column without a cell shows a dash. */
+  cells: z.array(comparisonCellSchema).max(MAX_COMPARISON_COLUMNS),
+});
+
+/**
+ * A comparison table ("Our academy vs studying alone", or plans): two to
+ * four columns, up to fifteen rows, each cell ✓ / ✗ / short text. Every
+ * cell must name one of the section's columns, once per row.
+ */
+export const comparisonSectionSchema = z
+  .object({
+    title: localizedRequired(MAX_SHORT_TEXT),
+    description: localizedOptional(MAX_COMPARISON_DESCRIPTION_LENGTH).optional(),
+    columns: z
+      .array(comparisonColumnSchema)
+      .min(MIN_COMPARISON_COLUMNS)
+      .max(MAX_COMPARISON_COLUMNS),
+    rows: z.array(comparisonRowSchema).max(MAX_COMPARISON_ROWS),
+  })
+  .superRefine((config, ctx) => {
+    const columnIds = new Set(config.columns.map((column) => column.id));
+    config.rows.forEach((row, rowIndex) => {
+      const seen = new Set<string>();
+      row.cells.forEach((cell, cellIndex) => {
+        if (!columnIds.has(cell.column) || seen.has(cell.column)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'validation:invalid',
+            path: ['rows', rowIndex, 'cells', cellIndex, 'column'],
+          });
+        }
+        seen.add(cell.column);
+      });
+    });
+  });
+
 /** Matches the frontend's `SECTION_SCHEMAS` map exactly — one schema per `SectionType`, `satisfies Record<SectionType, ZodTypeAny>`. */
 const SECTION_CONFIG_SCHEMAS = {
   hero: heroSectionSchema,
@@ -771,6 +893,9 @@ const SECTION_CONFIG_SCHEMAS = {
   video: videoSectionSchema,
   pricing: pricingSectionSchema,
   countdown: countdownSectionSchema,
+  interestForm: interestFormSectionSchema,
+  announcementBar: announcementBarSectionSchema,
+  comparison: comparisonSectionSchema,
 } satisfies Record<(typeof SECTION_TYPES)[number], z.ZodTypeAny>;
 
 /** Resolves the right Zod schema for a section type — matches `getSectionConfigSchema`. */
@@ -929,6 +1054,21 @@ export const sectionInstanceSchema = z.discriminatedUnion('type', [
     ...sectionInstanceBase,
     type: z.literal('countdown'),
     config: countdownSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('interestForm'),
+    config: interestFormSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('announcementBar'),
+    config: announcementBarSectionSchema,
+  }),
+  z.object({
+    ...sectionInstanceBase,
+    type: z.literal('comparison'),
+    config: comparisonSectionSchema,
   }),
 ]);
 

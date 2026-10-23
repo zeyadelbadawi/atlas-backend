@@ -121,3 +121,22 @@ describe('SectionReferenceValidatorService — CMS phase 3d sections', () => {
     ).toEqual(['courseId:other-course', 'pageId:missing']);
   });
 });
+
+describe('SectionReferenceValidatorService — CMS phase 3d (batch C)', () => {
+  it('checks the notice strip’s button', async () => {
+    expect(
+      await violations([
+        section('announcementBar', {
+          text: label,
+          tone: 'brand',
+          cta: { label, pageId: 'gone' },
+        }),
+        section('announcementBar', {
+          text: label,
+          tone: 'dark',
+          cta: { label, courseId: 'own-course' },
+        }),
+      ]),
+    ).toEqual(['pageId:gone']);
+  });
+});
