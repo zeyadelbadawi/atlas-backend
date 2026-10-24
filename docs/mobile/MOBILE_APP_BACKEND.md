@@ -68,10 +68,11 @@ account skips the academy's emailed sign-in code — narrowly:
 - Both must be set; unset (the default) changes nothing.
 - Only on the academy surface of that academy; never for a Platform Owner
   or an organization owner; an authenticator app (TOTP) is still asked.
-- Every use writes `auth.otp.app_review_bypass` to the audit log.
+- Checked only when the emailed code would otherwise be required; every
+  skipped code writes `auth.otp.app_review_bypass` to the audit log.
 - Use accounts with no money or staff role, and clear the variables after
   the review.
-- e2e: `test/app-review-access.e2e-spec.ts` (REVIEW-01..05).
+- e2e: `test/app-review-access.e2e-spec.ts` (REVIEW-01..06).
 
 ## B1 — push notifications
 

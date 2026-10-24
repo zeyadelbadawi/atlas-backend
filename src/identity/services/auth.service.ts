@@ -1626,15 +1626,17 @@ export class AuthService {
     // NOTHING: no access token, no refresh token, no session row — only
     // an opaque challenge reference that authenticates nothing and is
     // accepted by `/auth/otp/verify` and `/auth/otp/resend` alone.
+    // B3 — the review-account check runs only when a code would otherwise
+    // be demanded, so its audit row always marks a code actually skipped.
     if (
-      !(await this.isAppReviewSignIn(user, selection)) &&
       (await this.emailOtpService.isRequired({
         userId: user.id,
         surface: selection.surface,
         academyId: selection.academyId,
         trustCookie: context?.trustCookie,
         minimumPolicy: await this.privilegedEmailOtpFloor(user, selection.surface),
-      }))
+      })) &&
+      !(await this.isAppReviewSignIn(user, selection))
     ) {
       const challenge = await this.emailOtpService.issue({
         user,
@@ -1660,15 +1662,6 @@ export class AuthService {
     return session;
   }
 
-  /**
-   * ATO review F11 — a Platform Owner, or anyone who owns an organization,
-   * signing in to the management surface without a confirmed authenticator
-   * app (that branch returned above) gets AT LEAST the configured floor
-   * (`new_device` by default), whatever `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT`
-   * says — so a phished or reused password alone never opens the whole
-   * platform or an organization's money and staff. Academy-surface sessions
-   * carry learner access only and keep the academy policy.
-   */
   /**
    * B3 — an App Store / Google Play reviewer cannot read the demo account's
    * inbox, so a configured review account skips the emailed code. Narrow on
@@ -1707,6 +1700,15 @@ export class AuthService {
     return true;
   }
 
+  /**
+   * ATO review F11 — a Platform Owner, or anyone who owns an organization,
+   * signing in to the management surface without a confirmed authenticator
+   * app (that branch returned above) gets AT LEAST the configured floor
+   * (`new_device` by default), whatever `FLAG_AUTH_EMAIL_OTP_MODE_MANAGEMENT`
+   * says — so a phished or reused password alone never opens the whole
+   * platform or an organization's money and staff. Academy-surface sessions
+   * carry learner access only and keep the academy policy.
+   */
   private async privilegedEmailOtpFloor(
     user: User,
     surface: SignInSurface,

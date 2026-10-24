@@ -10,6 +10,7 @@
  *   REVIEW-03  unlisted account, demo academy → code required
  *   REVIEW-04  nothing configured → code required (the default)
  *   REVIEW-05  a listed account that owns an organization → code required
+ *   REVIEW-06  no code required anyway → no bypass audit row
  */
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -25,6 +26,7 @@ import {
 } from './utils/db-admin';
 import { CommunicationsProcessor } from '../src/communications/queue/communications.processor';
 import { CommunicationsScheduler } from '../src/communications/queue/communications.scheduler';
+import { EmailOtpService } from '../src/identity/services/email-otp.service';
 
 jest.setTimeout(240000);
 
@@ -174,5 +176,19 @@ describe('App review access (e2e, B3)', () => {
     review = { emails: demo.owner.email, academyId: demo.id };
     const res = await signIn(demo.owner.email, demo).expect(200);
     expect(res.body.emailOtpRequired).toBe(true);
+  });
+
+  it('REVIEW-06 — when no code would be asked anyway, nothing is recorded as bypassed', async () => {
+    const demo = await academy('r06');
+    const reviewer = await learner('r06-reviewer', demo);
+    review = { emails: reviewer.email, academyId: demo.id };
+    jest.spyOn(app.get(EmailOtpService), 'isRequired').mockResolvedValueOnce(false);
+    const res = await signIn(reviewer.email, demo).expect(200);
+    expect(res.body.accessToken).toEqual(expect.any(String));
+    expect(
+      await admin.auditLogEntry.count({
+        where: { action: 'auth.otp.app_review_bypass', actorUserId: reviewer.userId },
+      }),
+    ).toBe(0);
   });
 });
