@@ -27,6 +27,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AuthCoreModule } from '../identity/auth-core.module';
 import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { PushModule } from '../push/push.module';
 import { COMMUNICATIONS_QUEUE } from './queue/communications.types';
 import { CommunicationsProducer } from './queue/communications.producer';
 import { CommunicationsProcessor } from './queue/communications.processor';
@@ -59,6 +60,7 @@ import { MediaModule } from '../media/media.module';
     AuthCoreModule,
     IdentityModule,
     TenancyModule,
+    PushModule,
     // W3 — `EmailLogoService` reads the academy's logo from the PUBLIC media
     // store (`MEDIA_STORAGE_PROVIDER`). No cycle: nothing imports this
     // `@Global()` module explicitly.

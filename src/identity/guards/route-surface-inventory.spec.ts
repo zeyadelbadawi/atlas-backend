@@ -72,6 +72,9 @@ const SELF_OR_LEARNER = new Set<string>([
   // Atlas mobile app (B4) — the account's own consent records.
   'GET users/me/consents',
   'POST users/me/consents',
+  // Atlas mobile app (B1) — the account's own push devices (academy sessions only).
+  'PUT users/me/push-devices',
+  'DELETE users/me/push-devices/:id',
   // B0-SEC-13 — a learner's own privacy request (data deletion / export).
   // The subject is the token's account; filing needs a code emailed to the
   // verified address; the export is the caller's own rows under their own

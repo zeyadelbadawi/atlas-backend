@@ -204,6 +204,13 @@ const EnvSchema = z.object({
     )
     .optional(),
   APP_REVIEW_ACADEMY_ID: z.string().uuid().optional(),
+  // Mobile app push (B1): nothing is queued or sent unless exactly "on".
+  // FCM credentials are optional; incomplete ones fall back to a stub that
+  // sends nothing — the API never refuses to boot over them.
+  FLAG_PUSH_MODE: z.enum(['off', 'on']).optional(),
+  FCM_PROJECT_ID: z.string().min(1).max(200).optional(),
+  FCM_CLIENT_EMAIL: z.string().email().optional(),
+  FCM_PRIVATE_KEY: z.string().min(1).max(10_000).optional(),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z
     .union([z.literal('true'), z.literal('false')])

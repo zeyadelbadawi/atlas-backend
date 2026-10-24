@@ -522,6 +522,8 @@ export class AccountDeletionService {
       await tx.userPhone.deleteMany({ where: { userId } });
       // Mobile app consent records (B4) — the account's own data, erased with it.
       await tx.userConsent.deleteMany({ where: { userId } });
+      // Mobile app push devices (B1): the phone must stop getting pushes.
+      await tx.pushDevice.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });

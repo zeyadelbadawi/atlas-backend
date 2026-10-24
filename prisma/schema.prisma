@@ -119,6 +119,7 @@ model User {
   /// credential), never on the directory row. No row = no phone.
   phone                                         UserPhone?
   consents                                      UserConsent[]
+  pushDevices                                   PushDevice[]
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -389,6 +390,33 @@ model UserConsent {
 
   @@index([userId, kind, acceptedAt(sort: Desc)], map: "user_consents_user_kind_idx")
   @@map("user_consents")
+}
+
+/// Atlas mobile app (B1, docs/mobile/MOBILE_APP_BACKEND.md) — an app install
+/// that accepted push notifications. Sent to only while `sessionId` is an
+/// active session and only for its own academy (plus account-wide notices).
+/// Own-row RLS; `release_push_token()` moves a token between accounts.
+model PushDevice {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  academyId  String    @map("academy_id")
+  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// The registering session (`refresh_tokens.session_id`, stable across rotation).
+  sessionId  String    @map("session_id")
+  /// `ios` | `android` (CHECK in the migration).
+  platform   String    @db.VarChar(16)
+  /// FCM registration token.
+  token      String    @unique(map: "push_devices_token_key") @db.VarChar(4096)
+  appVersion String    @map("app_version") @db.VarChar(32)
+  /// `en` | `ar` — the language pushes to this device are written in.
+  locale     String    @db.VarChar(8)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  lastSentAt DateTime? @map("last_sent_at")
+
+  @@index([userId, academyId], map: "push_devices_user_academy_idx")
+  @@map("push_devices")
 }
 
 model UserTwoFactor {
@@ -778,6 +806,7 @@ model Academy {
 
   /// Notification context isolation — academy-context feed rows.
   notifications Notification[]
+  pushDevices   PushDevice[]
 
   @@unique([nameKey])
   @@index([organizationId, status])
