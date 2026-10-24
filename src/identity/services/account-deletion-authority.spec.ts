@@ -77,6 +77,7 @@ function build(
     userPhone: { deleteMany: async () => ({}) },
     userConsent: { deleteMany: async () => ({}) },
     pushDevice: { deleteMany: async () => ({}) },
+    appleRefreshToken: { deleteMany: async () => ({}) },
     twoFactorRecoveryCode: { deleteMany: async () => ({}) },
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },

@@ -581,6 +581,28 @@ const CATALOG = {
     actionUrl: () => FORGOT_PASSWORD_PATH,
   },
   /**
+   * Atlas mobile app (B2) — Sign in with Apple was connected to an existing
+   * account (password-proven link from the app). The same security notice
+   * as `auth.identity.linked`, email only: the feed copy lives in the web's
+   * translations, which this release does not touch.
+   */
+  'auth.identity.apple_linked': {
+    category: 'security',
+    audience: 'platform',
+    channels: { inApp: 'never', email: 'always' },
+    priority: 'high',
+    notificationType: 'security',
+    retentionClass: 'extended',
+    dedupe: NEVER_DEDUPED,
+    cooldownSeconds: 0,
+    locale: 'user',
+    branding: 'platform',
+    template: 'auth.identity.apple_linked',
+    titleKey: 'notifications:events.googleLinked.title',
+    messageKey: 'notifications:events.googleLinked.message',
+    actionUrl: () => FORGOT_PASSWORD_PATH,
+  },
+  /**
    * Google Identity — the Google sign-in was disconnected. A security notice like
    * `auth.password.changed`: the owner hears about it, and the CTA is the
    * signed-out recovery page.

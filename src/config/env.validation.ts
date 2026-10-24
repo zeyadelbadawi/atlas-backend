@@ -211,6 +211,25 @@ const EnvSchema = z.object({
   FCM_PROJECT_ID: z.string().min(1).max(200).optional(),
   FCM_CLIENT_EMAIL: z.string().email().optional(),
   FCM_PRIVATE_KEY: z.string().min(1).max(10_000).optional(),
+  // Sign in with Apple for the mobile app (B2). Off unless exactly "on" AND
+  // at least one bundle id is listed. The signing key (team/key id + .p8)
+  // is needed only to exchange and revoke Apple tokens; without it sign-in
+  // still works and the revoke at account deletion is skipped (logged).
+  FLAG_AUTH_APPLE_MODE: z.enum(['off', 'on']).optional(),
+  APPLE_CLIENT_IDS: z
+    .string()
+    .max(1000)
+    .regex(/^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$/, 'comma-separated bundle ids')
+    .optional(),
+  APPLE_TEAM_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_KEY_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_PRIVATE_KEY: z.string().min(1).max(10_000).optional(),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z
     .union([z.literal('true'), z.literal('false')])

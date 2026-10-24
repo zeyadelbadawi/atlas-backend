@@ -55,7 +55,10 @@ export class IdentityResolver {
   }
 
   /** The account a federated identity (provider + stable subject) is linked to. */
-  async identityOwner(provider: 'google', subject: string): Promise<string | null> {
+  async identityOwner(
+    provider: 'google' | 'apple',
+    subject: string,
+  ): Promise<string | null> {
     return this.scalar(
       this.prisma.$queryRaw<{ id: string | null }[]>`
         SELECT auth_identity_owner(${provider}, ${subject}) AS id`,

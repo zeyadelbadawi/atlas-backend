@@ -134,3 +134,53 @@ separate door for people with nothing to archive.
 - Not allowed → 403 `errors.account.learnerDeletionNotAvailable`; the app
   offers the privacy request flow instead.
 - e2e: `test/learner-account-deletion.e2e-spec.ts` (LDEL-01..05).
+
+## B2 — Sign in with Apple (native, iOS app)
+
+**Off by default.** Every route answers 404 unless `FLAG_AUTH_APPLE_MODE=on`
+and `APPLE_CLIENT_IDS` lists the app's bundle id. `GET /public/mobile/config`
+reports `signInWithApple` so the app shows the button only then.
+
+| Variable | Meaning |
+|---|---|
+| `FLAG_AUTH_APPLE_MODE` | `on` to offer it |
+| `APPLE_CLIENT_IDS` | Comma-separated bundle ids (the identity token's `aud`) |
+| `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | The Sign in with Apple key (.p8). Needed to exchange the authorization code and to revoke at deletion; without it sign-in still works and the revoke is skipped (logged) |
+
+Apple is a first factor, like Google (`docs/GOOGLE_IDENTITY.md`): it
+replaces the password step only. Status, the academy's surface and
+registration rules, TOTP and the academy's emailed code all still apply.
+
+- `POST /auth/apple/native` `{ identityToken, rawNonce, authorizationCode?, givenName?, familyName?, academyId }`
+  on the academy host (the id must be the host's). The token is verified
+  with Apple's JWKS: RS256, `iss`, `aud` ∈ `APPLE_CLIENT_IDS`, `exp`/`iat`,
+  `nonce` = SHA-256(`rawNonce`), `sub`, verified `email`.
+  - `(apple, sub)` linked → the normal sign-in answer (session, emailed
+    code or TOTP), `authMethod: "apple"`.
+  - an account has the address → `{ appleStep: "link_required", pending, expiresAt, email }`.
+  - no account → `{ appleStep: "create_account", pending, expiresAt, email, name? }`.
+- `POST /auth/apple/link` `{ pending, password }` — the account's own
+  password (same per-account budget as sign-in); a wrong password keeps the
+  step open. Platform Owners are refused. Links, emails
+  `auth.identity.apple_linked` (security notice, email only), signs in.
+- `POST /auth/apple/create-account` `{ pending, name, phoneNumber, phoneCountry, consents }`
+  — one account through the same registration transaction as a password
+  sign-up (phone uniqueness, learner row under the registration policy,
+  consents), the address verified (Apple verifies every address it
+  shares, private relay included). A fixable input keeps the step open.
+- `pending` secrets: Redis, 10 minutes, single-use, bound to the host.
+- Apple tokens: the authorization code is exchanged for a refresh token,
+  sealed (AES-256-GCM, HKDF of the existing credential key) in
+  `apple_refresh_tokens` (FORCE RLS own row). Account deletion revokes it
+  with Apple (best effort, never blocks) and erases it with the identity.
+
+Migration `20261128000300_sign_in_with_apple`: `ADD VALUE 'apple'` to
+`auth_identity_provider` and `auth_method`, plus the token table. Additive.
+
+Email deliverability: mail to `@privaterelay.appleid.com` is delivered
+only from domains registered in the Apple Developer account (Certificates,
+Identifiers & Profiles → Services → Sign in with Apple for Email
+Communication). Register the sending domains before turning the flag on.
+
+e2e: `test/apple-sign-in.e2e-spec.ts` (APPLE-01..07); unit:
+`src/identity/apple/*.spec.ts`.

@@ -38,6 +38,7 @@ describe('Mobile app config (e2e, B5)', () => {
         ios: { minimumVersion: '0.0.0', latestVersion: null, storeUrl: null },
         android: { minimumVersion: '0.0.0', latestVersion: null, storeUrl: null },
         maintenance: false,
+        signInWithApple: false,
       });
       expect(response.headers['cache-control']).toBe('public, max-age=60');
       expect(response.headers['set-cookie']).toBeUndefined();
@@ -53,6 +54,8 @@ describe('Mobile app config (e2e, B5)', () => {
       MOBILE_STORE_URL_IOS: 'https://apps.apple.com/app/id000000000',
       MOBILE_MIN_VERSION_ANDROID: '1.1.0',
       MOBILE_MAINTENANCE_MODE: 'true',
+      FLAG_AUTH_APPLE_MODE: 'on',
+      APPLE_CLIENT_IDS: 'com.atlas.learner',
     };
     const config = app.get(ConfigService);
     const spy = jest
@@ -71,6 +74,7 @@ describe('Mobile app config (e2e, B5)', () => {
         },
         android: { minimumVersion: '1.1.0', latestVersion: null, storeUrl: null },
         maintenance: true,
+        signInWithApple: true,
       });
     } finally {
       spy.mockRestore();

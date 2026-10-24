@@ -491,8 +491,12 @@ export class AuthService {
     readonly organizationName?: string;
     readonly planId?: string;
     readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
+    /** Atlas mobile app (B2) — the app's create-account step collects them. */
+    readonly phoneNumber?: string;
+    readonly phoneCountry?: string;
+    readonly consents?: ConsentsDto;
     readonly external: {
-      readonly provider: 'google';
+      readonly provider: 'google' | 'apple';
       readonly subject: string;
       readonly emailVerified: boolean;
     };
@@ -548,7 +552,7 @@ export class AuthService {
     wantsOrganization: boolean,
     metricMode: SignupMetricMode,
     external?: {
-      readonly provider: 'google';
+      readonly provider: 'google' | 'apple';
       readonly subject: string;
       readonly emailVerified: boolean;
     },

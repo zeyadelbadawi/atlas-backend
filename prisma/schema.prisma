@@ -120,6 +120,7 @@ model User {
   phone                                         UserPhone?
   consents                                      UserConsent[]
   pushDevices                                   PushDevice[]
+  appleRefreshToken                             AppleRefreshToken?
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -296,6 +297,8 @@ model RefreshToken {
 enum AuthMethod {
   password
   google
+  /// Atlas mobile app (B2) — Sign in with Apple.
+  apple
 
   @@map("auth_method")
 }
@@ -417,6 +420,21 @@ model PushDevice {
 
   @@index([userId, academyId], map: "push_devices_user_academy_idx")
   @@map("push_devices")
+}
+
+/// Atlas mobile app (B2) — the Apple refresh token kept ONLY so the account's
+/// Apple tokens can be revoked when it is deleted (Apple requirement). Sealed
+/// by the application (AES-256-GCM); own-row RLS; erased with the account.
+model AppleRefreshToken {
+  userId      String   @id @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sealedToken String   @map("sealed_token")
+  /// The app's bundle id the token was issued to (the revoke call needs it).
+  clientId    String   @map("client_id") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("apple_refresh_tokens")
 }
 
 model UserTwoFactor {
@@ -5904,6 +5922,8 @@ model TrustedDevice {
 /// Google Identity — an external sign-in provider.
 enum AuthIdentityProvider {
   google
+  /// Atlas mobile app (B2).
+  apple
 
   @@map("auth_identity_provider")
 }

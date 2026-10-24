@@ -18,6 +18,7 @@ import { template as supportCaseReply } from './keys/support.case.reply';
 import { template as supportCaseStatusChanged } from './keys/support.case.status_changed';
 import { template as authPasswordChanged } from './keys/auth.password.changed';
 import { template as authIdentityLinked } from './keys/auth.identity.linked';
+import { template as authIdentityAppleLinked } from './keys/auth.identity.apple_linked';
 import { template as authIdentityUnlinked } from './keys/auth.identity.unlinked';
 import { template as authTwoFactorEnabled } from './keys/auth.two_factor.enabled';
 import { template as authTwoFactorDisabled } from './keys/auth.two_factor.disabled';
@@ -147,6 +148,7 @@ export const TEMPLATES: Record<string, CommunicationTemplate> = {
   'auth.password.changed': authPasswordChanged,
   'account.academy.joined': accountAcademyJoined,
   'auth.identity.linked': authIdentityLinked,
+  'auth.identity.apple_linked': authIdentityAppleLinked,
   'auth.identity.unlinked': authIdentityUnlinked,
   'auth.two_factor.enabled': authTwoFactorEnabled,
   'auth.two_factor.disabled': authTwoFactorDisabled,

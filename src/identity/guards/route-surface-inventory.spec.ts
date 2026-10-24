@@ -244,6 +244,12 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/health': 'public uptime check; status word only, no details',
   // Atlas mobile app — supported versions, store links, maintenance flag.
   'GET public/mobile/config': 'mobile app version gate; operator-set values only',
+  // Sign in with Apple (B2) — the mobile app's native sign-in and its two
+  // follow-up steps; metered like sign-in / sign-up; 404 while off.
+  'POST auth/apple/native':
+    'Apple identity token sign-in; signature, audience and nonce checked',
+  'POST auth/apple/link': 'single-use step secret + the account password',
+  'POST auth/apple/create-account': 'single-use step secret; registration rules apply',
   'GET public/signup-options': 'which signup paths are enabled',
   'POST public/contact': 'marketing contact form; rate-limited',
   'GET verify/:code': 'public certificate verification by unguessable code',

@@ -25,6 +25,8 @@ export interface MobileConfigResponse {
   readonly ios: MobilePlatformConfig;
   readonly android: MobilePlatformConfig;
   readonly maintenance: boolean;
+  /** Show the Sign in with Apple button (B2): its flag is on and a bundle id is set. */
+  readonly signInWithApple: boolean;
 }
 
 @ApiTags('mobile')
@@ -41,6 +43,9 @@ export class MobileConfigController {
       ios: this.platform('IOS'),
       android: this.platform('ANDROID'),
       maintenance: this.config.get<string>('MOBILE_MAINTENANCE_MODE') === 'true',
+      signInWithApple:
+        this.config.get<string>('FLAG_AUTH_APPLE_MODE') === 'on' &&
+        (this.config.get<string>('APPLE_CLIENT_IDS') ?? '').trim().length > 0,
     };
   }
 

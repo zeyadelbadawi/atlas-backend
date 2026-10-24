@@ -55,7 +55,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { AppleTokenService } from '../apple/apple-token.service';
 import { randomUUID } from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -124,6 +126,7 @@ export class AccountDeletionService {
     private readonly studentDeviceService: StudentDeviceService,
     private readonly learningLeaseService: LearningLeaseService,
     private readonly academyArchiveService: AcademyArchiveService,
+    @Optional() private readonly appleTokenService?: AppleTokenService,
   ) {}
 
   /**
@@ -235,6 +238,11 @@ export class AccountDeletionService {
         messageKey: 'errors.auth.platformOwnerCannotSelfDelete',
       });
     }
+
+    // Sign in with Apple (B2): Apple requires the app to revoke the user's
+    // Apple tokens on deletion. Best effort, before the token row is erased
+    // below; it never blocks or fails the deletion.
+    await this.appleTokenService?.revokeBeforeDeletion(userId);
 
     const academiesArchived = await this.archiveOwnedAcademies(userId, actor);
 
@@ -524,6 +532,8 @@ export class AccountDeletionService {
       await tx.userConsent.deleteMany({ where: { userId } });
       // Mobile app push devices (B1): the phone must stop getting pushes.
       await tx.pushDevice.deleteMany({ where: { userId } });
+      // Sign in with Apple (B2): the sealed refresh token, revoked above.
+      await tx.appleRefreshToken.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });
