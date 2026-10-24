@@ -35,3 +35,22 @@ from the environment:
 
 Listed in the route inventory (`route-surface-inventory.spec.ts`); e2e in
 `test/mobile-config.e2e-spec.ts`.
+
+## B4 — consent records (`user_consents`)
+
+Terms of Service, Privacy Policy and the 13+ age confirmation, with the
+wording version shown and where (`web` | `ios` | `android`).
+
+- `POST /auth/register` accepts an optional `consents`:
+  `{ "source": "ios", "termsVersion": "terms-2026-10", "privacyVersion": "privacy-2026-10", "ageConfirmed": true }`.
+  Stored only when the request creates a new account. The web does not send
+  it; its requests are unchanged. `ageConfirmed` must be `true`.
+- `GET /users/me/consents` → the latest acceptance per kind
+  (`{ terms, privacy, age_13_plus }`, each `{ version, source, acceptedAt }` or `null`).
+- `POST /users/me/consents` (same body) records a new acceptance; 10/min.
+- Table: FORCE RLS, own rows only; no UPDATE policy (records are never
+  rewritten); DELETE only for the account itself, used by account deletion.
+  Migration `20261128000100_user_consents` (additive).
+- Account deletion erases them; the privacy export lists them under
+  `account.consents`.
+- e2e: `test/user-consents.e2e-spec.ts`.

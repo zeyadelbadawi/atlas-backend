@@ -520,6 +520,8 @@ export class AccountDeletionService {
       // The phone number is personal data with no audit value: erased, not
       // kept on the anonymised account (docs/USER_PHONE.md).
       await tx.userPhone.deleteMany({ where: { userId } });
+      // Mobile app consent records (B4) — the account's own data, erased with it.
+      await tx.userConsent.deleteMany({ where: { userId } });
       await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
       await tx.passwordResetToken.deleteMany({ where: { userId } });
       await tx.emailVerificationToken.deleteMany({ where: { userId } });

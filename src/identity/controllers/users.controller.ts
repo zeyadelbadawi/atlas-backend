@@ -15,12 +15,16 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { UsersService } from '../services/users.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UpdatePreferencesDto } from '../dto/update-preferences.dto';
 import { UpdatePhoneDto } from '../dto/update-phone.dto';
 import { UserPhoneService } from '../phone/user-phone.service';
 import type { UserPhoneResponse } from '../phone/user-phone.service';
+import { ConsentsDto } from '../consents/consents.dto';
+import { UserConsentService } from '../consents/user-consent.service';
+import type { ConsentSummary } from '../consents/user-consent.service';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { DeleteAccountDto } from '../dto/delete-account.dto';
 import { AccountDeletionService } from '../services/account-deletion.service';
@@ -46,6 +50,7 @@ export class UsersController {
     private readonly deletionPlanService: DeletionPlanService,
     private readonly accountDeletionChallengeService: AccountDeletionChallengeService,
     private readonly userPhoneService: UserPhoneService,
+    private readonly userConsentService: UserConsentService,
   ) {}
 
   @Get('me')
@@ -108,6 +113,27 @@ export class UsersController {
   @Delete('me/phone')
   async removePhone(@CurrentAuthContext() auth: AuthContext): Promise<UserPhoneResponse> {
     return this.userPhoneService.removeOwn(auth.userId);
+  }
+
+  /**
+   * Atlas mobile app (B4) — the latest terms / privacy / 13+ acceptance of
+   * the caller's own account, so the app knows whether to ask again. No id
+   * in the path: always the token's own account.
+   */
+  @Get('me/consents')
+  async getConsents(@CurrentAuthContext() auth: AuthContext): Promise<ConsentSummary> {
+    return this.userConsentService.latestOwn(auth.userId);
+  }
+
+  /** Records a new acceptance (append-only). */
+  @Post('me/consents')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async recordConsents(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() dto: ConsentsDto,
+  ): Promise<ConsentSummary> {
+    return this.userConsentService.recordOwn(auth.userId, dto);
   }
 
   @Post('me/password')

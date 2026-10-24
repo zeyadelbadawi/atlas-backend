@@ -29,6 +29,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { AttributionDto } from '../../common/attribution/attribution';
+import { ConsentsDto } from '../consents/consents.dto';
 import { IsNotCommonPassword } from '../password/common-password.validator';
 import {
   IsMobilePhoneNumber,
@@ -142,4 +143,14 @@ export class RegisterDto {
   @ValidateNested()
   @Type(() => AttributionDto)
   readonly attribution?: AttributionDto;
+
+  /**
+   * Atlas mobile app (B4) — terms, privacy and the 13+ confirmation the app
+   * showed. Optional: the web does not send it. Stored only when the
+   * request creates a new account.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ConsentsDto)
+  readonly consents?: ConsentsDto;
 }

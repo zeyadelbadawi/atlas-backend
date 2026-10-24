@@ -75,6 +75,7 @@ function build(
     userAuthIdentity: { deleteMany: async () => ({}) },
     userCredential: { deleteMany: async () => ({}) },
     userPhone: { deleteMany: async () => ({}) },
+    userConsent: { deleteMany: async () => ({}) },
     twoFactorRecoveryCode: { deleteMany: async () => ({}) },
     passwordResetToken: { deleteMany: async () => ({}) },
     emailVerificationToken: { deleteMany: async () => ({}) },

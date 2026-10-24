@@ -47,6 +47,7 @@ export async function assemblePrivacyExport(
   const [
     user,
     phone,
+    consents,
     memberships,
     enrollments,
     lessonProgress,
@@ -71,6 +72,11 @@ export async function assemblePrivacyExport(
     tx.userPhone.findUnique({
       where: { userId },
       select: { phoneE164: true, countryCode: true, verifiedAt: true },
+    }),
+    tx.userConsent.findMany({
+      where: { userId },
+      select: { kind: true, version: true, source: true, acceptedAt: true },
+      orderBy: { acceptedAt: 'asc' },
     }),
     tx.academyStudent.findMany({
       where: { userId },
@@ -229,6 +235,13 @@ export async function assemblePrivacyExport(
             verifiedAt: iso(phone.verifiedAt),
           }
         : null,
+      // Mobile app (B4) — terms / privacy / 13+ acceptances.
+      consents: consents.map((row) => ({
+        kind: row.kind,
+        version: row.version,
+        source: row.source,
+        acceptedAt: iso(row.acceptedAt),
+      })),
     },
     academies: memberships.map((row) => ({
       academyId: row.academyId,

@@ -69,6 +69,9 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET users/me/phone',
   'PUT users/me/phone',
   'DELETE users/me/phone',
+  // Atlas mobile app (B4) — the account's own consent records.
+  'GET users/me/consents',
+  'POST users/me/consents',
   // B0-SEC-13 — a learner's own privacy request (data deletion / export).
   // The subject is the token's account; filing needs a code emailed to the
   // verified address; the export is the caller's own rows under their own

@@ -61,6 +61,7 @@ import { GoogleIdentityRepository } from './google/google-identity.repository';
 import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
 import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
 import { UserPhoneService } from './phone/user-phone.service';
+import { UserConsentService } from './consents/user-consent.service';
 import { PhoneVerificationService } from './phone/phone-verification.service';
 import { LearningLeaseService } from '../learning/services/learning-lease.service';
 import { AcademyArchiveModule } from '../academy/academy-archive.module';
@@ -109,6 +110,7 @@ import { AcademyArchiveModule } from '../academy/academy-archive.module';
     // Phone number (docs/USER_PHONE.md) — no verification provider is bound
     // (`PHONE_VERIFICATION_PROVIDER`); none is contracted yet.
     UserPhoneService,
+    UserConsentService,
     PhoneVerificationService,
     AcademySurfaceService,
     PasswordHasherService,

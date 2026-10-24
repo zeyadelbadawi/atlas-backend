@@ -118,6 +118,7 @@ model User {
   /// Phone number — its own strictly self-scoped table (like the
   /// credential), never on the directory row. No row = no phone.
   phone                                         UserPhone?
+  consents                                      UserConsent[]
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -368,6 +369,26 @@ model UserPhone {
   updatedAt              DateTime  @updatedAt @map("updated_at")
 
   @@map("user_phones")
+}
+
+/// Atlas mobile app (B4, docs/mobile/MOBILE_APP_BACKEND.md) — what the
+/// account accepted, when, which wording version, and where. Append-only:
+/// a new acceptance is a new row; nothing updates or deletes one (the rows
+/// go with the account on deletion). Own-row RLS only.
+model UserConsent {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `terms` | `privacy` | `age_13_plus` (CHECK in the migration).
+  kind       String   @db.VarChar(32)
+  /// The document or wording version shown, e.g. `terms-2026-10`.
+  version    String   @db.VarChar(64)
+  /// `web` | `ios` | `android` (CHECK in the migration).
+  source     String   @db.VarChar(16)
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+
+  @@index([userId, kind, acceptedAt(sort: Desc)], map: "user_consents_user_kind_idx")
+  @@map("user_consents")
 }
 
 model UserTwoFactor {

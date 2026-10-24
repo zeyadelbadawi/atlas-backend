@@ -35,6 +35,8 @@ import {
   requireNormalizedPhone,
 } from '../phone/user-phone.service';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
+import type { ConsentsDto } from '../consents/consents.dto';
+import { createConsentsForNewAccount } from '../consents/user-consent.service';
 import { SessionActivityService } from './session-activity.service';
 import { SessionRevocationService } from './session-revocation.service';
 import {
@@ -452,6 +454,8 @@ export class AuthService {
     whatsappConsent?: boolean;
     /** B0-ANL-04 — client-sent attribution; sanitised before storage. */
     attribution?: AttributionDto;
+    /** Atlas mobile app (B4) — stored only with a brand-new account. */
+    consents?: ConsentsDto;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<RegistrationResult> {
@@ -738,6 +742,10 @@ export class AuthService {
             // Same transaction, same self context: the account and its number
             // exist together or not at all.
             await createPhoneForNewAccount(tx, userId, phone, whatsappConsent);
+          }
+          if (input.consents) {
+            // Same transaction, same self context as the phone above.
+            await createConsentsForNewAccount(tx, userId, input.consents);
           }
           if (external) {
             await tx.userAuthIdentity.create({
