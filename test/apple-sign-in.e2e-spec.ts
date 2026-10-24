@@ -170,7 +170,7 @@ describe('Sign in with Apple (e2e, B2)', () => {
   it('APPLE-02/03 — create the account, then sign straight in next time', async () => {
     const a = await academy('ap02');
     const email = uniqueTestEmail('ap02');
-    claims = appleClaims(email, 'sub.ap02');
+    claims = appleClaims(email, `sub.ap02.${Date.now()}`);
 
     const step = await native(a).expect(200);
     expect(step.body).toMatchObject({
@@ -201,7 +201,7 @@ describe('Sign in with Apple (e2e, B2)', () => {
       await admin.userAuthIdentity.findFirst({
         where: { userId: user.id, provider: 'apple' },
       }),
-    ).toMatchObject({ providerSubject: 'sub.ap02' });
+    ).toMatchObject({ providerSubject: expect.stringMatching(/^sub\.ap02\./) });
     expect(await admin.userConsent.count({ where: { userId: user.id } })).toBe(3);
     expect(
       await admin.userPhone.findUnique({ where: { userId: user.id } }),
@@ -232,7 +232,7 @@ describe('Sign in with Apple (e2e, B2)', () => {
       .set('Host', a.host)
       .send({ name: 'Existing', email, password: PASSWORD, academyId: a.id })
       .expect(201);
-    claims = appleClaims(email, 'sub.ap04');
+    claims = appleClaims(email, `sub.ap04.${Date.now()}`);
 
     const step = await native(a).expect(200);
     expect(step.body).toMatchObject({ appleStep: 'link_required', email });
@@ -300,7 +300,7 @@ describe('Sign in with Apple (e2e, B2)', () => {
   it('APPLE-07 — deleting the account revokes and erases the Apple data', async () => {
     const a = await academy('ap07');
     const email = uniqueTestEmail('ap07');
-    claims = appleClaims(email, 'sub.ap07');
+    claims = appleClaims(email, `sub.ap07.${Date.now()}`);
     const step = await native(a).expect(200);
     const session = await http()
       .post('/auth/apple/create-account')
