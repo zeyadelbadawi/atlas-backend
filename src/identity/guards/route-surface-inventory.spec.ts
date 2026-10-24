@@ -231,6 +231,8 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/plans': 'public price list',
   // B0-OPS-09 — external uptime probe; `ok`/`unavailable` only.
   'GET public/health': 'public uptime check; status word only, no details',
+  // Atlas mobile app — supported versions, store links, maintenance flag.
+  'GET public/mobile/config': 'mobile app version gate; operator-set values only',
   'GET public/signup-options': 'which signup paths are enabled',
   'POST public/contact': 'marketing contact form; rate-limited',
   'GET verify/:code': 'public certificate verification by unguessable code',

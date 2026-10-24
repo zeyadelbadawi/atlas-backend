@@ -169,6 +169,28 @@ const EnvSchema = z.object({
   // workflow sets it on with the M1a marketing site (DL-51); when off,
   // beacons still get 204 and are dropped. The 25-month retention prune runs either way.
   MARKETING_EVENTS_ENABLED: z.union([z.literal('true'), z.literal('false')]).optional(),
+  // Atlas mobile app — `GET /public/mobile/config` (src/mobile). All
+  // optional: unset means "every app version is supported, no store links,
+  // no maintenance", so the web is unaffected and the app keeps working.
+  MOBILE_MIN_VERSION_IOS: z
+    .string()
+    .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+    .optional(),
+  MOBILE_MIN_VERSION_ANDROID: z
+    .string()
+    .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+    .optional(),
+  MOBILE_LATEST_VERSION_IOS: z
+    .string()
+    .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+    .optional(),
+  MOBILE_LATEST_VERSION_ANDROID: z
+    .string()
+    .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+    .optional(),
+  MOBILE_STORE_URL_IOS: z.string().url().startsWith('https://').optional(),
+  MOBILE_STORE_URL_ANDROID: z.string().url().startsWith('https://').optional(),
+  MOBILE_MAINTENANCE_MODE: z.union([z.literal('true'), z.literal('false')]).optional(),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z
     .union([z.literal('true'), z.literal('false')])

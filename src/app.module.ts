@@ -39,6 +39,7 @@ import {
 import { DatabaseModule } from './database/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
+import { MobileModule } from './mobile/mobile.module';
 import { SecurityReportsModule } from './security-reports/security-reports.module';
 import { SessionCookieInterceptor } from './identity/session-cookie/session-cookie.interceptor';
 import { MetricsModule } from './observability/metrics/metrics.module';
@@ -181,6 +182,7 @@ import { EdgeCacheModule } from './edge-cache/edge-cache.module';
     // W3-compose — Platform Owner "Compose and send" and academy "Messages".
     CommunicationCampaignsModule,
     HealthModule,
+    MobileModule,
     SecurityReportsModule,
     // P64 Phase 2 §U — the first metrics registry in the codebase.
     MetricsModule,
