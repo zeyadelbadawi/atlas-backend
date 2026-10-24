@@ -65,8 +65,10 @@ export class FcmPushProvider implements PushProvider {
     }
     const text = await response.text().catch(() => '');
     if (response.status === 401) this.accessToken = null;
+    // Only FCM's own verdict on the TOKEN removes a device. A bare 404 (a
+    // wrong FCM_PROJECT_ID, say) is our misconfiguration and would otherwise
+    // delete every registered device.
     if (
-      response.status === 404 ||
       /UNREGISTERED|registration-token-not-registered/.test(text) ||
       (response.status === 400 &&
         /registration token|INVALID_ARGUMENT.*token/i.test(text))

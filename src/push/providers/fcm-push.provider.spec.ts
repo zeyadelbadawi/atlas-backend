@@ -92,6 +92,20 @@ describe('FcmPushProvider', () => {
     });
   });
 
+  it('a bare 404 (wrong project) is rejected, never a dead token', async () => {
+    const { impl } = fakeFetch(404, {
+      error: {
+        code: 404,
+        status: 'NOT_FOUND',
+        message: 'Requested entity was not found.',
+      },
+    });
+    await expect(provider(impl).send(message)).resolves.toMatchObject({
+      ok: false,
+      reason: 'rejected',
+    });
+  });
+
   it('treats 5xx and 429 as transient, other 4xx as rejected', async () => {
     await expect(
       provider(fakeFetch(503, 'down').impl).send(message),

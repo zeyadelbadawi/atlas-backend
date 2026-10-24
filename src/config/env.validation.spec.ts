@@ -27,6 +27,38 @@ const VALID_BASE = {
 };
 
 describe('validateEnv', () => {
+  it('mobile app settings: blank values mean unset (the deploy writes KEY= for unset variables)', () => {
+    const keys = [
+      'MOBILE_MIN_VERSION_IOS',
+      'MOBILE_MIN_VERSION_ANDROID',
+      'MOBILE_LATEST_VERSION_IOS',
+      'MOBILE_LATEST_VERSION_ANDROID',
+      'MOBILE_STORE_URL_IOS',
+      'MOBILE_STORE_URL_ANDROID',
+      'MOBILE_MAINTENANCE_MODE',
+      'APP_REVIEW_EMAILS',
+      'APP_REVIEW_ACADEMY_ID',
+      'FLAG_PUSH_MODE',
+      'FCM_PROJECT_ID',
+      'FCM_CLIENT_EMAIL',
+      'FCM_PRIVATE_KEY',
+      'FLAG_AUTH_APPLE_MODE',
+      'APPLE_CLIENT_IDS',
+      'APPLE_TEAM_ID',
+      'APPLE_KEY_ID',
+      'APPLE_PRIVATE_KEY',
+    ];
+    const blank = Object.fromEntries(keys.map((k) => [k, '']));
+    const result = validateEnv({ ...VALID_BASE, NODE_ENV: 'development', ...blank });
+    for (const key of keys) {
+      expect((result as Record<string, unknown>)[key]).toBeUndefined();
+    }
+    // A set value is still validated.
+    expect(() =>
+      validateEnv({ ...VALID_BASE, NODE_ENV: 'development', FLAG_PUSH_MODE: 'maybe' }),
+    ).toThrow();
+  });
+
   it('accepts a minimal valid development configuration', () => {
     const result = validateEnv({ ...VALID_BASE, NODE_ENV: 'development' });
     expect(result.NODE_ENV).toBe('development');
