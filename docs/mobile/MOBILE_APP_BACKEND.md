@@ -54,3 +54,21 @@ wording version shown and where (`web` | `ios` | `android`).
 - Account deletion erases them; the privacy export lists them under
   `account.consents`.
 - e2e: `test/user-consents.e2e-spec.ts`.
+
+## B3 — App Store / Google Play review access
+
+A reviewer cannot read the demo account's inbox, so a configured review
+account skips the academy's emailed sign-in code — narrowly:
+
+| Variable | Meaning |
+|---|---|
+| `APP_REVIEW_EMAILS` | Comma-separated review account emails |
+| `APP_REVIEW_ACADEMY_ID` | The ONE demo academy where they skip the code |
+
+- Both must be set; unset (the default) changes nothing.
+- Only on the academy surface of that academy; never for a Platform Owner
+  or an organization owner; an authenticator app (TOTP) is still asked.
+- Every use writes `auth.otp.app_review_bypass` to the audit log.
+- Use accounts with no money or staff role, and clear the variables after
+  the review.
+- e2e: `test/app-review-access.e2e-spec.ts` (REVIEW-01..05).

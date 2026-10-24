@@ -1623,13 +1623,14 @@ export class AuthService {
     // an opaque challenge reference that authenticates nothing and is
     // accepted by `/auth/otp/verify` and `/auth/otp/resend` alone.
     if (
-      await this.emailOtpService.isRequired({
+      !(await this.isAppReviewSignIn(user, selection)) &&
+      (await this.emailOtpService.isRequired({
         userId: user.id,
         surface: selection.surface,
         academyId: selection.academyId,
         trustCookie: context?.trustCookie,
         minimumPolicy: await this.privilegedEmailOtpFloor(user, selection.surface),
-      })
+      }))
     ) {
       const challenge = await this.emailOtpService.issue({
         user,
@@ -1664,6 +1665,44 @@ export class AuthService {
    * platform or an organization's money and staff. Academy-surface sessions
    * carry learner access only and keep the academy policy.
    */
+  /**
+   * B3 — an App Store / Google Play reviewer cannot read the demo account's
+   * inbox, so a configured review account skips the emailed code. Narrow on
+   * purpose: only when BOTH `APP_REVIEW_EMAILS` and `APP_REVIEW_ACADEMY_ID`
+   * are set, only on the academy surface of THAT academy, never for a
+   * Platform Owner or an organization owner, and never instead of an
+   * authenticator app (that branch runs before this one). Every use is
+   * audited. Unset (the default) → always false.
+   */
+  private async isAppReviewSignIn(
+    user: User,
+    selection: { readonly surface: SignInSurface; readonly academyId?: string },
+  ): Promise<boolean> {
+    const emails = this.configService.get<string>('APP_REVIEW_EMAILS');
+    const academyId = this.configService.get<string>('APP_REVIEW_ACADEMY_ID');
+    if (!emails || !academyId) return false;
+    if (selection.surface !== 'academy' || selection.academyId !== academyId)
+      return false;
+    const listed = emails
+      .split(',')
+      .map((e) => normalizeEmail(e.trim()))
+      .includes(normalizeEmail(user.email));
+    if (!listed || user.isPlatformOwner) return false;
+    const principal = await this.principalResolver.resolve(user.id);
+    if (principal.ownsAnOrganization) return false;
+    await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: user.id,
+        action: 'auth.otp.app_review_bypass',
+        targetType: 'user',
+        targetId: user.id,
+        academyId,
+        context: { surface: selection.surface },
+      }),
+    );
+    return true;
+  }
+
   private async privilegedEmailOtpFloor(
     user: User,
     surface: SignInSurface,

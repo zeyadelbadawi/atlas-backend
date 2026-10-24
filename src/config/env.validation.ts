@@ -191,6 +191,19 @@ const EnvSchema = z.object({
   MOBILE_STORE_URL_IOS: z.string().url().startsWith('https://').optional(),
   MOBILE_STORE_URL_ANDROID: z.string().url().startsWith('https://').optional(),
   MOBILE_MAINTENANCE_MODE: z.union([z.literal('true'), z.literal('false')]).optional(),
+  // App Store / Google Play review (B3, docs/mobile/MOBILE_APP_BACKEND.md):
+  // learner accounts that may sign in to ONE demo academy without the
+  // emailed code, because a reviewer cannot read that inbox. Both must be
+  // set for anything to change; unset (the default) changes nothing.
+  APP_REVIEW_EMAILS: z
+    .string()
+    .max(2000)
+    .refine(
+      (v) => v.split(',').every((e) => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(e.trim())),
+      'comma-separated email addresses',
+    )
+    .optional(),
+  APP_REVIEW_ACADEMY_ID: z.string().uuid().optional(),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z
     .union([z.literal('true'), z.literal('false')])
