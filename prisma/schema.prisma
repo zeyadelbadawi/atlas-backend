@@ -118,6 +118,9 @@ model User {
   /// Phone number — its own strictly self-scoped table (like the
   /// credential), never on the directory row. No row = no phone.
   phone                                         UserPhone?
+  consents                                      UserConsent[]
+  pushDevices                                   PushDevice[]
+  appleRefreshToken                             AppleRefreshToken?
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
   ownedOrganizations                            Organization[]                           @relation("OrganizationOwner")
@@ -294,6 +297,8 @@ model RefreshToken {
 enum AuthMethod {
   password
   google
+  /// Atlas mobile app (B2) — Sign in with Apple.
+  apple
 
   @@map("auth_method")
 }
@@ -368,6 +373,68 @@ model UserPhone {
   updatedAt              DateTime  @updatedAt @map("updated_at")
 
   @@map("user_phones")
+}
+
+/// Atlas mobile app (B4, docs/mobile/MOBILE_APP_BACKEND.md) — what the
+/// account accepted, when, which wording version, and where. Append-only:
+/// a new acceptance is a new row; nothing updates or deletes one (the rows
+/// go with the account on deletion). Own-row RLS only.
+model UserConsent {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `terms` | `privacy` | `age_13_plus` (CHECK in the migration).
+  kind       String   @db.VarChar(32)
+  /// The document or wording version shown, e.g. `terms-2026-10`.
+  version    String   @db.VarChar(64)
+  /// `web` | `ios` | `android` (CHECK in the migration).
+  source     String   @db.VarChar(16)
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+
+  @@index([userId, kind, acceptedAt(sort: Desc)], map: "user_consents_user_kind_idx")
+  @@map("user_consents")
+}
+
+/// Atlas mobile app (B1, docs/mobile/MOBILE_APP_BACKEND.md) — an app install
+/// that accepted push notifications. Sent to only while `sessionId` is an
+/// active session and only for its own academy (plus account-wide notices).
+/// Own-row RLS; `release_push_token()` moves a token between accounts.
+model PushDevice {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  academyId  String    @map("academy_id")
+  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  /// The registering session (`refresh_tokens.session_id`, stable across rotation).
+  sessionId  String    @map("session_id")
+  /// `ios` | `android` (CHECK in the migration).
+  platform   String    @db.VarChar(16)
+  /// FCM registration token.
+  token      String    @unique(map: "push_devices_token_key") @db.VarChar(4096)
+  appVersion String    @map("app_version") @db.VarChar(32)
+  /// `en` | `ar` — the language pushes to this device are written in.
+  locale     String    @db.VarChar(8)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  lastSentAt DateTime? @map("last_sent_at")
+
+  @@index([userId, academyId], map: "push_devices_user_academy_idx")
+  @@map("push_devices")
+}
+
+/// Atlas mobile app (B2) — the Apple refresh token kept ONLY so the account's
+/// Apple tokens can be revoked when it is deleted (Apple requirement). Sealed
+/// by the application (AES-256-GCM); own-row RLS; erased with the account.
+model AppleRefreshToken {
+  userId      String   @id @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sealedToken String   @map("sealed_token")
+  /// The app's bundle id the token was issued to (the revoke call needs it).
+  clientId    String   @map("client_id") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("apple_refresh_tokens")
 }
 
 model UserTwoFactor {
@@ -757,6 +824,7 @@ model Academy {
 
   /// Notification context isolation — academy-context feed rows.
   notifications Notification[]
+  pushDevices   PushDevice[]
 
   @@unique([nameKey])
   @@index([organizationId, status])
@@ -5854,6 +5922,8 @@ model TrustedDevice {
 /// Google Identity — an external sign-in provider.
 enum AuthIdentityProvider {
   google
+  /// Atlas mobile app (B2).
+  apple
 
   @@map("auth_identity_provider")
 }

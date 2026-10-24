@@ -15,6 +15,7 @@ import type { Job } from 'bullmq';
 import { CommunicationDispatchService } from '../services/communication-dispatch.service';
 import { QuizExceptionActivationService } from '../services/quiz-exception-activation.service';
 import { DeliveryEventService } from '../services/delivery-event.service';
+import { PushProducer } from '../../push/push.producer';
 import type { CommunicationsWebhookJobPayload } from './communications-queue.types';
 import {
   COMMUNICATIONS_QUEUE,
@@ -36,6 +37,7 @@ export class CommunicationsProcessor extends WorkerHost {
     private readonly dispatch: CommunicationDispatchService,
     private readonly deliveryEvents: DeliveryEventService,
     private readonly exceptionActivation: QuizExceptionActivationService,
+    private readonly push: PushProducer,
   ) {
     super();
   }
@@ -50,6 +52,10 @@ export class CommunicationsProcessor extends WorkerHost {
     switch (job.name) {
       case COMMUNICATION_JOB_DISPATCH: {
         const { outboxId } = job.data as CommunicationDispatchJobPayload;
+        // Mobile app push (B1): the in-app row is committed by now. Queued
+        // once per row (the job id dedupes email retries); a no-op unless
+        // FLAG_PUSH_MODE=on, and it never throws into the email path.
+        await this.push.enqueue(outboxId);
         const outcome = await this.dispatch.dispatch(outboxId, {
           made: job.attemptsMade,
           max: job.opts.attempts ?? COMMUNICATION_DISPATCH_ATTEMPTS,

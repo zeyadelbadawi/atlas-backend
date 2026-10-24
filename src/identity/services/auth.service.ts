@@ -35,6 +35,8 @@ import {
   requireNormalizedPhone,
 } from '../phone/user-phone.service';
 import { deriveDeviceLabel } from '../utils/request-metadata.util';
+import type { ConsentsDto } from '../consents/consents.dto';
+import { createConsentsForNewAccount } from '../consents/user-consent.service';
 import { SessionActivityService } from './session-activity.service';
 import { SessionRevocationService } from './session-revocation.service';
 import {
@@ -452,6 +454,8 @@ export class AuthService {
     whatsappConsent?: boolean;
     /** B0-ANL-04 — client-sent attribution; sanitised before storage. */
     attribution?: AttributionDto;
+    /** Atlas mobile app (B4) — stored only with a brand-new account. */
+    consents?: ConsentsDto;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
     context?: { readonly ipAddress?: string; readonly userAgent?: string };
   }): Promise<RegistrationResult> {
@@ -487,8 +491,12 @@ export class AuthService {
     readonly organizationName?: string;
     readonly planId?: string;
     readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
+    /** Atlas mobile app (B2) — the app's create-account step collects them. */
+    readonly phoneNumber?: string;
+    readonly phoneCountry?: string;
+    readonly consents?: ConsentsDto;
     readonly external: {
-      readonly provider: 'google';
+      readonly provider: 'google' | 'apple';
       readonly subject: string;
       readonly emailVerified: boolean;
     };
@@ -544,7 +552,7 @@ export class AuthService {
     wantsOrganization: boolean,
     metricMode: SignupMetricMode,
     external?: {
-      readonly provider: 'google';
+      readonly provider: 'google' | 'apple';
       readonly subject: string;
       readonly emailVerified: boolean;
     },
@@ -738,6 +746,10 @@ export class AuthService {
             // Same transaction, same self context: the account and its number
             // exist together or not at all.
             await createPhoneForNewAccount(tx, userId, phone, whatsappConsent);
+          }
+          if (input.consents) {
+            // Same transaction, same self context as the phone above.
+            await createConsentsForNewAccount(tx, userId, input.consents);
           }
           if (external) {
             await tx.userAuthIdentity.create({
@@ -1614,14 +1626,17 @@ export class AuthService {
     // NOTHING: no access token, no refresh token, no session row — only
     // an opaque challenge reference that authenticates nothing and is
     // accepted by `/auth/otp/verify` and `/auth/otp/resend` alone.
+    // B3 — the review-account check runs only when a code would otherwise
+    // be demanded, so its audit row always marks a code actually skipped.
     if (
-      await this.emailOtpService.isRequired({
+      (await this.emailOtpService.isRequired({
         userId: user.id,
         surface: selection.surface,
         academyId: selection.academyId,
         trustCookie: context?.trustCookie,
         minimumPolicy: await this.privilegedEmailOtpFloor(user, selection.surface),
-      })
+      })) &&
+      !(await this.isAppReviewSignIn(user, selection))
     ) {
       const challenge = await this.emailOtpService.issue({
         user,
@@ -1645,6 +1660,44 @@ export class AuthService {
     await this.usersRepository.touchLastSignInAt(user.id);
 
     return session;
+  }
+
+  /**
+   * B3 — an App Store / Google Play reviewer cannot read the demo account's
+   * inbox, so a configured review account skips the emailed code. Narrow on
+   * purpose: only when BOTH `APP_REVIEW_EMAILS` and `APP_REVIEW_ACADEMY_ID`
+   * are set, only on the academy surface of THAT academy, never for a
+   * Platform Owner or an organization owner, and never instead of an
+   * authenticator app (that branch runs before this one). Every use is
+   * audited. Unset (the default) → always false.
+   */
+  private async isAppReviewSignIn(
+    user: User,
+    selection: { readonly surface: SignInSurface; readonly academyId?: string },
+  ): Promise<boolean> {
+    const emails = this.configService.get<string>('APP_REVIEW_EMAILS');
+    const academyId = this.configService.get<string>('APP_REVIEW_ACADEMY_ID');
+    if (!emails || !academyId) return false;
+    if (selection.surface !== 'academy' || selection.academyId !== academyId)
+      return false;
+    const listed = emails
+      .split(',')
+      .map((e) => normalizeEmail(e.trim()))
+      .includes(normalizeEmail(user.email));
+    if (!listed || user.isPlatformOwner) return false;
+    const principal = await this.principalResolver.resolve(user.id);
+    if (principal.ownsAnOrganization) return false;
+    await this.tenancyContextService.runInUserContext(user.id, (tx) =>
+      this.auditLogWriterService.writeBestEffort(tx, {
+        actorUserId: user.id,
+        action: 'auth.otp.app_review_bypass',
+        targetType: 'user',
+        targetId: user.id,
+        academyId,
+        context: { surface: selection.surface },
+      }),
+    );
+    return true;
   }
 
   /**

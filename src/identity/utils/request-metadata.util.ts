@@ -94,17 +94,20 @@ export function deriveDeviceLabel(userAgent: string | undefined): string | undef
 
   // Order matters: Edge and Opera both also contain "Chrome", and Chrome
   // contains "Safari", so the more specific brand has to win first.
-  const browser = /\bEdg[e]?\//i.test(userAgent)
-    ? 'Edge'
-    : /\bOPR\/|\bOpera\//i.test(userAgent)
-      ? 'Opera'
-      : /\bChrome\//i.test(userAgent)
-        ? 'Chrome'
-        : /\bFirefox\//i.test(userAgent)
-          ? 'Firefox'
-          : /\bSafari\//i.test(userAgent)
-            ? 'Safari'
-            : undefined;
+  // The Atlas mobile app (`AtlasApp/<version> (<platform>)`) names itself.
+  const browser = /\bAtlasApp\//.test(userAgent)
+    ? 'Atlas app'
+    : /\bEdg[e]?\//i.test(userAgent)
+      ? 'Edge'
+      : /\bOPR\/|\bOpera\//i.test(userAgent)
+        ? 'Opera'
+        : /\bChrome\//i.test(userAgent)
+          ? 'Chrome'
+          : /\bFirefox\//i.test(userAgent)
+            ? 'Firefox'
+            : /\bSafari\//i.test(userAgent)
+              ? 'Safari'
+              : undefined;
 
   const platform = /\bWindows NT\b/i.test(userAgent)
     ? 'Windows'

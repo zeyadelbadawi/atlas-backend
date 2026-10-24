@@ -69,6 +69,17 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET users/me/phone',
   'PUT users/me/phone',
   'DELETE users/me/phone',
+  // Atlas mobile app (B4) — the account's own consent records.
+  'GET users/me/consents',
+  'POST users/me/consents',
+  // Atlas mobile app (B1) — the account's own push devices (academy sessions only).
+  'PUT users/me/push-devices',
+  'DELETE users/me/push-devices/:id',
+  // Atlas mobile app (B8) — a learner with no staff or owner role deletes
+  // their own account from an academy session (emailed code).
+  'GET users/me/learner-deletion',
+  'POST users/me/learner-deletion/request',
+  'POST users/me/learner-deletion',
   // B0-SEC-13 — a learner's own privacy request (data deletion / export).
   // The subject is the token's account; filing needs a code emailed to the
   // verified address; the export is the caller's own rows under their own
@@ -231,6 +242,14 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/plans': 'public price list',
   // B0-OPS-09 — external uptime probe; `ok`/`unavailable` only.
   'GET public/health': 'public uptime check; status word only, no details',
+  // Atlas mobile app — supported versions, store links, maintenance flag.
+  'GET public/mobile/config': 'mobile app version gate; operator-set values only',
+  // Sign in with Apple (B2) — the mobile app's native sign-in and its two
+  // follow-up steps; metered like sign-in / sign-up; 404 while off.
+  'POST auth/apple/native':
+    'Apple identity token sign-in; signature, audience and nonce checked',
+  'POST auth/apple/link': 'single-use step secret + the account password',
+  'POST auth/apple/create-account': 'single-use step secret; registration rules apply',
   'GET public/signup-options': 'which signup paths are enabled',
   'POST public/contact': 'marketing contact form; rate-limited',
   'GET verify/:code': 'public certificate verification by unguessable code',

@@ -7,6 +7,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -15,12 +16,17 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { UsersService } from '../services/users.service';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UpdatePreferencesDto } from '../dto/update-preferences.dto';
 import { UpdatePhoneDto } from '../dto/update-phone.dto';
 import { UserPhoneService } from '../phone/user-phone.service';
 import type { UserPhoneResponse } from '../phone/user-phone.service';
+import { ConsentsDto } from '../consents/consents.dto';
+import { UserConsentService } from '../consents/user-consent.service';
+import { PrincipalResolverService } from '../../tenancy/services/principal-resolver.service';
+import type { ConsentSummary } from '../consents/user-consent.service';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { DeleteAccountDto } from '../dto/delete-account.dto';
 import { AccountDeletionService } from '../services/account-deletion.service';
@@ -46,6 +52,8 @@ export class UsersController {
     private readonly deletionPlanService: DeletionPlanService,
     private readonly accountDeletionChallengeService: AccountDeletionChallengeService,
     private readonly userPhoneService: UserPhoneService,
+    private readonly userConsentService: UserConsentService,
+    private readonly principalResolver: PrincipalResolverService,
   ) {}
 
   @Get('me')
@@ -108,6 +116,27 @@ export class UsersController {
   @Delete('me/phone')
   async removePhone(@CurrentAuthContext() auth: AuthContext): Promise<UserPhoneResponse> {
     return this.userPhoneService.removeOwn(auth.userId);
+  }
+
+  /**
+   * Atlas mobile app (B4) — the latest terms / privacy / 13+ acceptance of
+   * the caller's own account, so the app knows whether to ask again. No id
+   * in the path: always the token's own account.
+   */
+  @Get('me/consents')
+  async getConsents(@CurrentAuthContext() auth: AuthContext): Promise<ConsentSummary> {
+    return this.userConsentService.latestOwn(auth.userId);
+  }
+
+  /** Records a new acceptance (append-only). */
+  @Post('me/consents')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async recordConsents(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() dto: ConsentsDto,
+  ): Promise<ConsentSummary> {
+    return this.userConsentService.recordOwn(auth.userId, dto);
   }
 
   @Post('me/password')
@@ -193,5 +222,70 @@ export class UsersController {
       reason: dto.reason as AccountDeletionReason | undefined,
       feedback: dto.feedback,
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Atlas mobile app (B8) — a LEARNER deletes their own account from an
+  // academy session. The management routes above stay management-only
+  // because deleting an owner's account archives their academies; this
+  // door is for people with nothing to archive: no organization membership,
+  // no academy staff role, not a Platform Owner. Same emailed code, same
+  // single implementation (`AccountDeletionService.deleteOwnAccount`).
+  // ---------------------------------------------------------------------
+
+  /** Whether this session may use the learner door (the app shows the right flow). */
+  @Get('me/learner-deletion')
+  async learnerDeletionAvailability(
+    @CurrentAuthContext() auth: AuthContext,
+  ): Promise<{ readonly allowed: boolean }> {
+    return { allowed: await this.isLearnerOnlyAcademySession(auth) };
+  }
+
+  @Post('me/learner-deletion/request')
+  @UseGuards(CredentialCheckRateLimitGuard)
+  @HttpCode(HttpStatus.OK)
+  async requestLearnerDeletion(
+    @CurrentAuthContext() auth: AuthContext,
+  ): Promise<AccountDeletionChallengeContract> {
+    await this.assertLearnerOnlyAcademySession(auth);
+    return this.accountDeletionChallengeService.issue(auth.userId, auth.sessionId);
+  }
+
+  @Post('me/learner-deletion')
+  @UseGuards(CredentialCheckRateLimitGuard)
+  @HttpCode(HttpStatus.OK)
+  async deleteLearnerAccount(
+    @CurrentAuthContext() auth: AuthContext,
+    @Body() dto: DeleteAccountDto,
+  ): Promise<{ deleted: boolean; academiesArchived: number }> {
+    await this.assertLearnerOnlyAcademySession(auth);
+    await this.accountDeletionChallengeService.consume(
+      auth.userId,
+      auth.sessionId,
+      dto.challengeId,
+      dto.code,
+    );
+    return this.accountDeletionService.deleteOwnAccount(auth.userId, {
+      reason: dto.reason as AccountDeletionReason | undefined,
+      feedback: dto.feedback,
+    });
+  }
+
+  private async isLearnerOnlyAcademySession(auth: AuthContext): Promise<boolean> {
+    if (auth.surface !== 'academy' || !auth.academyId) return false;
+    const principal = await this.principalResolver.resolve(auth.userId);
+    return (
+      !principal.isPlatformOwner &&
+      principal.organizationMembershipCount === 0 &&
+      principal.academyStaff.length === 0
+    );
+  }
+
+  private async assertLearnerOnlyAcademySession(auth: AuthContext): Promise<void> {
+    if (!(await this.isLearnerOnlyAcademySession(auth))) {
+      throw new ForbiddenException({
+        messageKey: 'errors.account.learnerDeletionNotAvailable',
+      });
+    }
   }
 }

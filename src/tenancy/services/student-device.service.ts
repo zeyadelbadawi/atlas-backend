@@ -80,17 +80,21 @@ function mintDeviceCookie(): string {
  */
 export function deriveDeviceLabel(userAgent: string | undefined): string {
   if (!userAgent) return 'Unknown device';
-  const browser = /Edg\//.test(userAgent)
-    ? 'Edge'
-    : /OPR\//.test(userAgent)
-      ? 'Opera'
-      : /Chrome\//.test(userAgent)
-        ? 'Chrome'
-        : /Firefox\//.test(userAgent)
-          ? 'Firefox'
-          : /Safari\//.test(userAgent)
-            ? 'Safari'
-            : null;
+  // The Atlas mobile app (`AtlasApp/<version> (<platform>)`) is named as
+  // itself. Checked first: its WebView-free agent carries no browser brand.
+  const browser = /\bAtlasApp\//.test(userAgent)
+    ? 'Atlas app'
+    : /Edg\//.test(userAgent)
+      ? 'Edge'
+      : /OPR\//.test(userAgent)
+        ? 'Opera'
+        : /Chrome\//.test(userAgent)
+          ? 'Chrome'
+          : /Firefox\//.test(userAgent)
+            ? 'Firefox'
+            : /Safari\//.test(userAgent)
+              ? 'Safari'
+              : null;
   const platform = /iPhone|iPad|iPod/.test(userAgent)
     ? 'iOS'
     : /Android/.test(userAgent)

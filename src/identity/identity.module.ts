@@ -61,6 +61,10 @@ import { GoogleIdentityRepository } from './google/google-identity.repository';
 import { GoogleAuthRateLimitGuard } from './google/google-auth-rate-limit.guard';
 import { CredentialCheckRateLimitGuard } from './guards/credential-check-rate-limit.guard';
 import { UserPhoneService } from './phone/user-phone.service';
+import { UserConsentService } from './consents/user-consent.service';
+import { AppleAuthService } from './apple/apple-auth.service';
+import { AppleAuthController } from './apple/apple-auth.controller';
+import { AppleTokenService } from './apple/apple-token.service';
 import { PhoneVerificationService } from './phone/phone-verification.service';
 import { LearningLeaseService } from '../learning/services/learning-lease.service';
 import { AcademyArchiveModule } from '../academy/academy-archive.module';
@@ -89,6 +93,7 @@ import { AcademyArchiveModule } from '../academy/academy-archive.module';
   // pattern — Nest matches in declaration order. P64 C4's two controllers
   // join it ahead of `AuthController` for the same reason.
   controllers: [
+    AppleAuthController,
     TwoFactorController,
     EmailOtpController,
     TrustedDevicesController,
@@ -109,6 +114,9 @@ import { AcademyArchiveModule } from '../academy/academy-archive.module';
     // Phone number (docs/USER_PHONE.md) — no verification provider is bound
     // (`PHONE_VERIFICATION_PROVIDER`); none is contracted yet.
     UserPhoneService,
+    UserConsentService,
+    AppleAuthService,
+    AppleTokenService,
     PhoneVerificationService,
     AcademySurfaceService,
     PasswordHasherService,

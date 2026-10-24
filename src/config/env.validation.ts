@@ -14,6 +14,14 @@ import { platformAppHost } from '../common/security/platform-host.util';
 /** Workstream D — the Worker→API authorization secret is a 256-bit-class key, never a password. */
 export const MIN_GATE_AUTHZ_SECRET_LENGTH = 32;
 
+/**
+ * The deploy writes `KEY=${{ vars.KEY }}`, so an unset repository variable
+ * arrives as `KEY=` (an empty string). For optional settings that must mean
+ * "unset", never "invalid" — a blank value must not stop the API booting.
+ */
+const blankAsUnset = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value === '' ? undefined : value), schema);
+
 const EnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'staging', 'production', 'test'])
@@ -169,6 +177,87 @@ const EnvSchema = z.object({
   // workflow sets it on with the M1a marketing site (DL-51); when off,
   // beacons still get 204 and are dropped. The 25-month retention prune runs either way.
   MARKETING_EVENTS_ENABLED: z.union([z.literal('true'), z.literal('false')]).optional(),
+  // Atlas mobile app — `GET /public/mobile/config` (src/mobile). All
+  // optional: unset means "every app version is supported, no store links,
+  // no maintenance", so the web is unaffected and the app keeps working.
+  MOBILE_MIN_VERSION_IOS: blankAsUnset(
+    z
+      .string()
+      .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+      .optional(),
+  ),
+  MOBILE_MIN_VERSION_ANDROID: blankAsUnset(
+    z
+      .string()
+      .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+      .optional(),
+  ),
+  MOBILE_LATEST_VERSION_IOS: blankAsUnset(
+    z
+      .string()
+      .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+      .optional(),
+  ),
+  MOBILE_LATEST_VERSION_ANDROID: blankAsUnset(
+    z
+      .string()
+      .regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'must be MAJOR.MINOR.PATCH')
+      .optional(),
+  ),
+  MOBILE_STORE_URL_IOS: blankAsUnset(z.string().url().startsWith('https://').optional()),
+  MOBILE_STORE_URL_ANDROID: blankAsUnset(
+    z.string().url().startsWith('https://').optional(),
+  ),
+  MOBILE_MAINTENANCE_MODE: blankAsUnset(
+    z.union([z.literal('true'), z.literal('false')]).optional(),
+  ),
+  // App Store / Google Play review (B3, docs/mobile/MOBILE_APP_BACKEND.md):
+  // learner accounts that may sign in to ONE demo academy without the
+  // emailed code, because a reviewer cannot read that inbox. Both must be
+  // set for anything to change; unset (the default) changes nothing.
+  APP_REVIEW_EMAILS: blankAsUnset(
+    z
+      .string()
+      .max(2000)
+      .refine(
+        (v) => v.split(',').every((e) => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(e.trim())),
+        'comma-separated email addresses',
+      )
+      .optional(),
+  ),
+  APP_REVIEW_ACADEMY_ID: blankAsUnset(z.string().uuid().optional()),
+  // Mobile app push (B1): nothing is queued or sent unless exactly "on".
+  // FCM credentials are optional; incomplete ones fall back to a stub that
+  // sends nothing — the API never refuses to boot over them.
+  FLAG_PUSH_MODE: blankAsUnset(z.enum(['off', 'on']).optional()),
+  FCM_PROJECT_ID: blankAsUnset(z.string().min(1).max(200).optional()),
+  FCM_CLIENT_EMAIL: blankAsUnset(z.string().email().optional()),
+  FCM_PRIVATE_KEY: blankAsUnset(z.string().min(1).max(10_000).optional()),
+  // Sign in with Apple for the mobile app (B2). Off unless exactly "on" AND
+  // at least one bundle id is listed. The signing key (team/key id + .p8)
+  // is needed only to exchange and revoke Apple tokens; without it sign-in
+  // still works and the revoke at account deletion is skipped (logged).
+  FLAG_AUTH_APPLE_MODE: blankAsUnset(z.enum(['off', 'on']).optional()),
+  APPLE_CLIENT_IDS: blankAsUnset(
+    z
+      .string()
+      .max(1000)
+      .regex(/^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$/, 'comma-separated bundle ids')
+      .optional(),
+  ),
+  APPLE_TEAM_ID: blankAsUnset(
+    z
+      .string()
+      .regex(/^[A-Z0-9]{10}$/)
+      .optional(),
+  ),
+  APPLE_KEY_ID: blankAsUnset(
+    z
+      .string()
+      .regex(/^[A-Z0-9]{10}$/)
+      .optional(),
+  ),
+  APPLE_PRIVATE_KEY: blankAsUnset(z.string().min(1).max(10_000).optional()),
 
   EMAIL_DELIVERABILITY_CHECK_ENABLED: z
     .union([z.literal('true'), z.literal('false')])

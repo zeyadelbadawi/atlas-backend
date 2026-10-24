@@ -89,7 +89,7 @@ export interface AuthenticationSessionContract {
    * (`password` | `google`). The sign-in pages keep it as the browser's
    * "Last used" hint; it is only ever present on a real, minted session.
    */
-  readonly authMethod?: 'password' | 'google';
+  readonly authMethod?: 'password' | 'google' | 'apple';
   /** Absent on a real session. Present and `true` only on the challenge variants below. */
   readonly twoFactorRequired?: false;
   /** P64 Communications C4 — same discriminator role for the emailed-code challenge. */

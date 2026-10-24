@@ -1053,6 +1053,9 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ]),
   ev('auth.identity.linked', 'security', 'user', 'platform', false, ['provider', 'via']),
   ev('auth.identity.unlinked', 'security', 'user', 'platform', false, ['provider']),
+  // B3 — an App Store / Google Play review account signed in to the demo
+  // academy without the emailed code (APP_REVIEW_EMAILS).
+  ev('auth.otp.app_review_bypass', 'security', 'user', 'platform', false, ['surface']),
   // ATO review F1 — the first mailbox proof (a reset) on a never-verified
   // account removed the external sign-ins and 2FA its registrant attached.
   ev('auth.sign_in_methods.removed', 'security', 'user', 'platform', false, ['trigger']),

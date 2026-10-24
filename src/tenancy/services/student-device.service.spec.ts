@@ -184,6 +184,8 @@ function fakeTx(rows: DeviceRow[], hiddenHashes: readonly string[] = []) {
 describe('deriveDeviceLabel', () => {
   const cases: readonly (readonly [string, string, string])[] = [
     ['Chrome on macOS', CHROME_MAC, 'Chrome on macOS'],
+    ['Atlas app on iOS', 'AtlasApp/1.0.0 (iPhone; iOS 18.0)', 'Atlas app on iOS'],
+    ['Atlas app on Android', 'AtlasApp/1.0.0 (Android 15)', 'Atlas app on Android'],
     [
       'Chrome on Windows',
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
