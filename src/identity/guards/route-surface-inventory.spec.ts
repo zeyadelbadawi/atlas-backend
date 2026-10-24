@@ -75,6 +75,11 @@ const SELF_OR_LEARNER = new Set<string>([
   // Atlas mobile app (B1) — the account's own push devices (academy sessions only).
   'PUT users/me/push-devices',
   'DELETE users/me/push-devices/:id',
+  // Atlas mobile app (B8) — a learner with no staff or owner role deletes
+  // their own account from an academy session (emailed code).
+  'GET users/me/learner-deletion',
+  'POST users/me/learner-deletion/request',
+  'POST users/me/learner-deletion',
   // B0-SEC-13 — a learner's own privacy request (data deletion / export).
   // The subject is the token's account; filing needs a code emailed to the
   // verified address; the export is the caller's own rows under their own

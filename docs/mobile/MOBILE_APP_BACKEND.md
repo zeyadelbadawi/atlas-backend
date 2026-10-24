@@ -114,3 +114,23 @@ badge counts.
 
 e2e: `test/push-devices.e2e-spec.ts` (PUSH-01..08); unit:
 `src/push/**/*.spec.ts`.
+
+## B8 — a learner deletes their own account from the app
+
+Apple requires in-app account deletion. `/users/me/delete` stays
+management-only (deleting an owner archives their academies); this is a
+separate door for people with nothing to archive.
+
+- `GET /users/me/learner-deletion` → `{ allowed }` — true only for an
+  academy session of an account with no organization membership, no
+  academy staff role, and not a Platform Owner.
+- `POST /users/me/learner-deletion/request` → emails the same 6-digit code
+  as the management flow (verified address only).
+- `POST /users/me/learner-deletion` `{ confirm: true, challengeId, code }` →
+  the same `AccountDeletionService.deleteOwnAccount` as management:
+  anonymised account, every session revoked, phone, consents and push
+  devices erased. It deletes the global Atlas account (every academy) — the
+  app says so before asking.
+- Not allowed → 403 `errors.account.learnerDeletionNotAvailable`; the app
+  offers the privacy request flow instead.
+- e2e: `test/learner-account-deletion.e2e-spec.ts` (LDEL-01..05).
