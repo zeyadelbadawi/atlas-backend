@@ -246,6 +246,30 @@ describe('P64 Phase 3 — assessments, integrity, completion and certificates (e
   // engine v2: start / resume / autosave / deadline
   // ---------------------------------------------------------------------
 
+  it('a student enrolled in a PRIVATE course can start its quiz; someone not enrolled still cannot', async () => {
+    const w = await world('p3-private');
+    // Staff-enrolled academies keep their courses private; the enrollment
+    // (made while public above) is what grants access, not the catalogue.
+    await admin.course.update({
+      where: { id: w.course.id },
+      data: { visibility: 'private' },
+    });
+    const attempt = await start(w);
+    expect(attempt.status).toBe('in_progress');
+
+    const outsider = await signUp('p3-private-outsider');
+    await seedAcademyStudent(admin, w.academy.id, outsider.userId);
+    await http().post(attemptsPath(w)).set(auth(outsider.token)).expect(404);
+
+    // An unpublished course still refuses, even to an enrolled student.
+    const other = await world('p3-private-draft');
+    await admin.course.update({
+      where: { id: other.course.id },
+      data: { status: 'draft' },
+    });
+    await http().post(attemptsPath(other)).set(auth(other.student.token)).expect(404);
+  });
+
   it('start sets a server deadline from the time limit; the session carries the paper without isCorrect, the saved answers and the server clock', async () => {
     const w = await world('p3-start', { quiz: { timeLimitSeconds: 600 } });
     const attempt = await start(w);

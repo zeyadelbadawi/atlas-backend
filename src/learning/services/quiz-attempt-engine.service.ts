@@ -39,7 +39,6 @@ import type {
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AcademyStudentsRepository } from '../../tenancy/repositories/academy-students.repository';
 import { EnrollmentsRepository } from '../repositories/enrollments.repository';
-import { CoursesRepository } from '../../course/repositories/courses.repository';
 import { QuizzesRepository } from '../repositories/quizzes.repository';
 import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
 import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
@@ -147,7 +146,6 @@ export class QuizAttemptEngineService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly enrollmentsRepository: EnrollmentsRepository,
     private readonly academyStudentsRepository: AcademyStudentsRepository,
-    private readonly coursesRepository: CoursesRepository,
     private readonly quizzesRepository: QuizzesRepository,
     private readonly attempts: QuizAttemptsRepository,
     private readonly featureFlags: FeatureFlagsService,
@@ -168,11 +166,9 @@ export class QuizAttemptEngineService {
     quizId: string,
   ): Promise<QuizAttemptResponse> {
     const now = new Date();
-    const academyId =
-      await this.coursesRepository.resolveAcademyIdForPublishedCourse(courseId);
-    if (!academyId) throw new NotFoundException({ messageKey: 'errors.notFound' });
-    const engineV2 = this.featureFlags.isEnabledForAcademy('quizEngineV2', academyId);
-    const integrityOn = this.featureFlags.isEnabledForAcademy('quizIntegrity', academyId);
+    // Flags are read per academy once the enrollment is known (below).
+    let engineV2 = false;
+    let integrityOn = false;
 
     const started = await this.tenancyContextService.runInUserContext(
       userId,
@@ -183,6 +179,26 @@ export class QuizAttemptEngineService {
           userId,
           courseId,
           this.academyStudentsRepository,
+        );
+        // The course must be published; its VISIBILITY does not matter here.
+        // A private course reaches its students through staff enrollment, and
+        // the active enrollment above is what grants access — requiring
+        // `visibility: 'public'` (the self-enrollment catalogue rule) made
+        // every quiz in a private course answer 404 to its own students.
+        const course = await tx.course.findFirst({
+          where: { id: courseId, status: 'published' },
+          select: { academyId: true },
+        });
+        if (!course || course.academyId !== enrollment.academyId) {
+          throw new NotFoundException({ messageKey: 'errors.notFound' });
+        }
+        engineV2 = this.featureFlags.isEnabledForAcademy(
+          'quizEngineV2',
+          enrollment.academyId,
+        );
+        integrityOn = this.featureFlags.isEnabledForAcademy(
+          'quizIntegrity',
+          enrollment.academyId,
         );
         const quizRow = await this.quizzesRepository.findByIdWithCorrectAnswers(
           tx,
