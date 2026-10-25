@@ -61,6 +61,21 @@ inputs:
       REFUSES TO BOOT by design — production must fail honestly rather
       than fall back to the stub and silently send nothing. Leave a
       provider out until its credentials exist.
+  fcm_project_id:
+    required: false
+    default: ''
+    description: Firebase project id for mobile push (B1). Unset = push stub.
+  fcm_client_email:
+    required: false
+    default: ''
+    description: Firebase service-account email for mobile push (B1).
+  fcm_private_key:
+    required: false
+    default: ''
+    description: >-
+      Firebase service-account private key (the JSON's `private_key`, with
+      its `\n` escapes kept on one line). Push sends nothing unless
+      FLAG_PUSH_MODE=on as well.
   brevo_api_key:
     required: false
     default: ''
@@ -182,6 +197,9 @@ runs:
         MARKETING_EVENTS_ENABLED: ${{ inputs.marketing_events_enabled }}
         ATLAS_SSR: ${{ inputs.atlas_ssr }}
         FEATURE_FLAGS: ${{ inputs.feature_flags }}
+        FCM_PROJECT_ID: ${{ inputs.fcm_project_id }}
+        FCM_CLIENT_EMAIL: ${{ inputs.fcm_client_email }}
+        FCM_PRIVATE_KEY: ${{ inputs.fcm_private_key }}
       run: |
         set -euo pipefail
 
@@ -217,8 +235,16 @@ runs:
           # FLAG_AUTH_GOOGLE_MODE on and any of these missing.
           'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET',
           'GOOGLE_OAUTH_REDIRECT_URI',
+          # Mobile push (B1). Without all three the backend uses a stub
+          # that sends nothing; FLAG_PUSH_MODE (feature flags) gates it.
+          'FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY',
         ]
-        lines = [f"{k}={os.environ[k]}" for k in keys if os.environ.get(k)]
+        def one_line(k):
+            # A pasted private key may carry real line breaks; .env needs it
+            # on one line with `\n` escapes (the backend turns them back).
+            v = os.environ[k].strip()
+            return v.replace('\r', '').replace('\n', '\\n') if k == 'FCM_PRIVATE_KEY' else v
+        lines = [f"{k}={one_line(k)}" for k in keys if os.environ.get(k)]
         # Real-user monitoring: exactly `true` or `false`, so turning it off
         # is a real write rather than a dropped empty value.
         if os.environ.get('RUM_ENABLED') in ('true', 'false'):
