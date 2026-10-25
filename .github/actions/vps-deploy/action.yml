@@ -248,9 +248,13 @@ runs:
             # It also has spaces (`BEGIN PRIVATE KEY`), and deploy.sh runs
             # `source .env`, so it is single-quoted: bash and Compose's
             # env_file both read a single-quoted value literally. A PEM never
-            # holds a quote; a value that does is dropped, never written.
+            # holds a quote; a value that does is written as '' (blank =
+            # unset, the stub provider) so it still replaces an older line
+            # that `source .env` could not read.
             v = v.replace('\r', '').replace('\n', '\\n')
-            return f"'{v}'" if v and "'" not in v else ''
+            if not v:
+                return ''
+            return "''" if "'" in v else f"'{v}'"
         # Filter on the cleaned value: a whitespace-only secret must be
         # dropped, never written as `KEY=` over a working value.
         lines = [f"{k}={v}" for k in keys if os.environ.get(k) if (v := one_line(k))]
