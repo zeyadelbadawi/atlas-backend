@@ -135,6 +135,11 @@ jobs:
           google_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           google_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           google_redirect_uri: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+          # Mobile push (B1): project and client email are configuration
+          # (variables); the private key is a secret.
+          fcm_project_id: ${{ vars.FCM_PROJECT_ID }}
+          fcm_client_email: ${{ vars.FCM_CLIENT_EMAIL }}
+          fcm_private_key: ${{ secrets.FCM_PRIVATE_KEY }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);
@@ -197,6 +202,8 @@ jobs:
             FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
             FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}
             FLAG_AUTH_GOOGLE_PLATFORM=${{ vars.FLAG_AUTH_GOOGLE_PLATFORM || 'on' }}
+            # Mobile push (B1): off unless the variable says `on`.
+            FLAG_PUSH_MODE=${{ vars.FLAG_PUSH_MODE }}
 
   # 3. MIGRATION DEPLOYMENT — dispatch only, with the input explicitly set.
   #
@@ -237,6 +244,11 @@ jobs:
           google_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           google_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           google_redirect_uri: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+          # Mobile push (B1): project and client email are configuration
+          # (variables); the private key is a secret.
+          fcm_project_id: ${{ vars.FCM_PROJECT_ID }}
+          fcm_client_email: ${{ vars.FCM_CLIENT_EMAIL }}
+          fcm_private_key: ${{ secrets.FCM_PRIVATE_KEY }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);
@@ -299,3 +311,5 @@ jobs:
             FLAG_AUTH_GOOGLE_MODE=${{ vars.FLAG_AUTH_GOOGLE_MODE }}
             FLAG_AUTH_GOOGLE_ACADEMY_IDS=${{ vars.FLAG_AUTH_GOOGLE_ACADEMY_IDS }}
             FLAG_AUTH_GOOGLE_PLATFORM=${{ vars.FLAG_AUTH_GOOGLE_PLATFORM || 'on' }}
+            # Mobile push (B1): off unless the variable says `on`.
+            FLAG_PUSH_MODE=${{ vars.FLAG_PUSH_MODE }}
