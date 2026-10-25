@@ -244,7 +244,9 @@ runs:
             # on one line with `\n` escapes (the backend turns them back).
             v = os.environ[k].strip()
             return v.replace('\r', '').replace('\n', '\\n') if k == 'FCM_PRIVATE_KEY' else v
-        lines = [f"{k}={one_line(k)}" for k in keys if os.environ.get(k)]
+        # Filter on the cleaned value: a whitespace-only secret must be
+        # dropped, never written as `KEY=` over a working value.
+        lines = [f"{k}={v}" for k in keys if os.environ.get(k) if (v := one_line(k))]
         # Real-user monitoring: exactly `true` or `false`, so turning it off
         # is a real write rather than a dropped empty value.
         if os.environ.get('RUM_ENABLED') in ('true', 'false'):

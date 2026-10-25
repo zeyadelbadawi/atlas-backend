@@ -92,7 +92,7 @@ Actions) through `deploy.yml` → `vps-deploy`, which upserts them into
 | `FCM_PROJECT_ID` | variable | the Firebase project id |
 | `FCM_CLIENT_EMAIL` | variable | the service account's `client_email` |
 | `FCM_PRIVATE_KEY` | secret | the service account's `private_key`, `\n` escapes kept (real line breaks are folded back to `\n` by the action) |
-| `FLAG_PUSH_MODE` | variable | `on` to send; unset = nothing is sent |
+| `FLAG_PUSH_MODE` | variable | `on` to send. Unset sends nothing only while no value was ever synced; to stop sending, set `off` and redeploy |
 
 An unset value is dropped, never written as empty, so removing a
 variable leaves the last synced value on the host: to stop sending, set
