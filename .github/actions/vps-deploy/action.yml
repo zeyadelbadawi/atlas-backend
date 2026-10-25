@@ -257,6 +257,14 @@ runs:
         ]
         def one_line(k):
             v = os.environ[k].strip()
+            if k in ('MOBILE_ANDROID_CERT_SHA256', 'MOBILE_IOS_APP_IDS'):
+                # Comma lists: written without spaces and only from safe
+                # characters, so `source .env` in deploy.sh reads one plain
+                # word (a space would make it run the next item as a
+                # command). Anything else is written blank (= unset).
+                import re
+                v = ','.join(p.strip() for p in v.split(',') if p.strip())
+                return v if re.fullmatch(r'[A-Za-z0-9:._,-]+', v) else "''"
             if k != 'FCM_PRIVATE_KEY':
                 return v
             # A pasted private key may carry real line breaks; .env needs it

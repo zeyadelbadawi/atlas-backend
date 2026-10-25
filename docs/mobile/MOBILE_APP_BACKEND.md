@@ -58,6 +58,11 @@ Deploy: GitHub **variables** (public values) `MOBILE_ANDROID_CERT_SHA256` and
 `MOBILE_IOS_APP_IDS`, passed by `deploy.yml`. Both are known only once the
 store accounts exist (phase 9); until then links open in the browser as today.
 
+Like every optional value the deploy syncs, clearing the GitHub variable
+does **not** remove a value already written to `/opt/atlas/.env` (an empty
+value is never written over a live one). To stop serving a file, remove its
+line from `/opt/atlas/.env` on the VPS and redeploy.
+
 ## B4 — consent records (`user_consents`)
 
 Terms of Service, Privacy Policy and the 13+ age confirmation, with the
