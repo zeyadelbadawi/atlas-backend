@@ -240,10 +240,21 @@ runs:
           'FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY',
         ]
         def one_line(k):
+            v = os.environ[k].strip()
+            if k != 'FCM_PRIVATE_KEY':
+                return v
             # A pasted private key may carry real line breaks; .env needs it
             # on one line with `\n` escapes (the backend turns them back).
-            v = os.environ[k].strip()
-            return v.replace('\r', '').replace('\n', '\\n') if k == 'FCM_PRIVATE_KEY' else v
+            # It also has spaces (`BEGIN PRIVATE KEY`), and deploy.sh runs
+            # `source .env`, so it is single-quoted: bash and Compose's
+            # env_file both read a single-quoted value literally. A PEM never
+            # holds a quote; a value that does is written as '' (blank =
+            # unset, the stub provider) so it still replaces an older line
+            # that `source .env` could not read.
+            v = v.replace('\r', '').replace('\n', '\\n')
+            if not v:
+                return ''
+            return "''" if "'" in v else f"'{v}'"
         # Filter on the cleaned value: a whitespace-only secret must be
         # dropped, never written as `KEY=` over a working value.
         lines = [f"{k}={v}" for k in keys if os.environ.get(k) if (v := one_line(k))]
