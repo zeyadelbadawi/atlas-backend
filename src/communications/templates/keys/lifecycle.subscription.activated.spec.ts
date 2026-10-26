@@ -10,6 +10,7 @@
 import { TemplateRegistry } from '../template-registry';
 import type { RenderInput } from '../template-registry';
 import { template } from './lifecycle.subscription.activated';
+import { formatEmailDate } from '../layout';
 
 const KEY = 'lifecycle.subscription.activated';
 
@@ -22,6 +23,13 @@ const INPUT: RenderInput = {
 const GIFT_START = '2026-10-04 09:30 UTC';
 const GIFT_END = '2026-10-11 09:30 UTC';
 const PAID_END = '2026-11-11 09:30 UTC';
+// As the email writes them: on Cairo time (summer time until late October).
+const EN = {
+  giftStart: '4 October 2026 at 12:30 (Cairo time)',
+  giftEnd: '11 October 2026 at 12:30 (Cairo time)',
+  paidEnd: '11 November 2026 at 11:30 (Cairo time)',
+};
+const ar = (value: string): string => formatEmailDate(value, 'ar');
 
 const BASE = {
   anchorAt: '2026-11-11T09:30:00.000Z',
@@ -64,10 +72,10 @@ describe('lifecycle.subscription.activated — gifted days', () => {
       const { text, html, subject } = render('en', WITH_GIFT);
       expect(subject).toBe('Your Growth subscription is active');
       expect(text).toContain(
-        `Gifted days: 7 days, from ${GIFT_START} to ${GIFT_END}. These days are a gift: they come before the period you paid for and are never taken from it.`,
+        `Gifted days: 7 days, from ${EN.giftStart} to ${EN.giftEnd}. These days are a gift: they come before the period you paid for and are never taken from it.`,
       );
       expect(text).toContain(
-        `Paid subscription period: from ${GIFT_END} to ${PAID_END}. Your subscription expires on ${PAID_END} unless you renew it.`,
+        `Paid subscription period: from ${EN.giftEnd} to ${EN.paidEnd}. Your subscription expires on ${EN.paidEnd} unless you renew it.`,
       );
       // The plain "active from X to Y" sentence would claim the paid start
       // is when the subscription began — not with a gift in front of it.
@@ -80,7 +88,7 @@ describe('lifecycle.subscription.activated — gifted days', () => {
     it('without a gift: the plain receipt, no gift wording at all', () => {
       const { text, html } = render('en', NO_GIFT);
       expect(text).toContain(
-        'Your subscription to Growth is active from 2026-11-11 09:30 UTC to 2026-12-11 09:30 UTC.',
+        'Your subscription to Growth is active from 11 November 2026 at 11:30 (Cairo time) to 11 December 2026 at 11:30 (Cairo time).',
       );
       expect(text).not.toMatch(EN_GIFT_WORDS);
       expect(html).not.toMatch(EN_GIFT_WORDS);
@@ -113,8 +121,8 @@ describe('lifecycle.subscription.activated — gifted days', () => {
       expect(text).toContain('ما لم تجدّده.');
       // Every date is present, isolated left-to-right inside the RTL text.
       for (const date of [GIFT_START, GIFT_END, PAID_END]) {
-        expect(text).toContain(`⁦${date}⁩`);
-        expect(html).toContain(`⁦${date}⁩`);
+        expect(text).toContain(`⁦${ar(date)}⁩`);
+        expect(html).toContain(`⁦${ar(date)}⁩`);
       }
       expect(html).toContain('<html lang="ar" dir="rtl">');
       expect(html).toContain('الأيام المُهداة');
@@ -132,7 +140,7 @@ describe('lifecycle.subscription.activated — gifted days', () => {
     it('without a gift: the plain receipt, no gift wording at all', () => {
       const { text, html } = render('ar', NO_GIFT);
       expect(text).toContain(
-        'اشتراكك في Growth فعّال من ⁦2026-11-11 09:30 UTC⁩ حتى ⁦2026-12-11 09:30 UTC⁩.',
+        `اشتراكك في Growth فعّال من ⁦${ar('2026-11-11 09:30 UTC')}⁩ حتى ⁦${ar('2026-12-11 09:30 UTC')}⁩.`,
       );
       expect(text).not.toMatch(AR_GIFT_WORDS);
       expect(html).not.toMatch(AR_GIFT_WORDS);

@@ -53,9 +53,7 @@ describe('email layout — B2 branding', () => {
       VALUES,
     );
     expect(html).toContain('<html lang="en" dir="ltr">');
-    expect(html).toMatch(
-      new RegExp(`<img src="${LOGO}" alt="Atlas" width="48" height="48"`),
-    );
+    expect(html).toMatch(new RegExp(`<img src="${LOGO}" alt="" width="48" height="48"`));
     expect(LOGO).toMatch(/\.png$/);
     expect(html).toContain('>Atlas</span>');
     expect(html).toContain('bgcolor="#1B3A8C"');
@@ -84,7 +82,9 @@ describe('email layout — B2 branding', () => {
       VALUES,
     );
     expect(html).toContain('<html lang="ar" dir="rtl">');
-    expect(html).toContain('alt="أطلس"');
+    // The mark is decorative: the name beside it is the text, shown once.
+    expect(html).toContain('alt=""');
+    expect(html).toContain('>أطلس</span>');
     expect(html).toContain("font-family:Tahoma,'Segoe UI','Noto Sans Arabic'");
     expect(html).toContain('href="https://atlass.dpdns.org/ar"');
     expect(html).toContain('href="https://docs.atlass.dpdns.org/ar"');

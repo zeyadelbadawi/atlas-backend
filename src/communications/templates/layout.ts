@@ -217,8 +217,8 @@ function positiveInt(value: number | undefined): number | undefined {
  * `alt` = the brand name, and the email-client-safe inline reset — or,
  * when there is no usable logo, the academy name as text. A `data:` URI or
  * a relative path never reaches `src`. A platform email: the Atlas mark
- * (alt = the platform name) beside the name in text, so the brand still
- * reads when images are blocked.
+ * (decorative, empty alt) beside the name in text, so the brand still
+ * reads, once, when images are blocked.
  */
 function renderLogo(context: TemplateRenderContext, brand: string): string {
   const branding = context.branding;
@@ -228,7 +228,9 @@ function renderLogo(context: TemplateRenderContext, brand: string): string {
     const name = `<span style="${nameStyle}">${escapeHtml(brand)}</span>`;
     if (!isEmailSafeImageUrl(logo)) return name;
     const size = PLATFORM_LOGO_SIZE;
-    const img = `<img src="${escapeHtml(logo)}" alt="${escapeHtml(brand)}" width="${size}" height="${size}" style="display:block;border:0;outline:none;text-decoration:none;width:${size}px;height:${size}px;border-radius:10px;" />`;
+    // alt="" — the name is written beside it, so a blocked image (Gmail
+    // blocks every image in Spam) shows the name once, not twice.
+    const img = `<img src="${escapeHtml(logo)}" alt="" width="${size}" height="${size}" style="display:block;border:0;outline:none;text-decoration:none;width:${size}px;height:${size}px;border-radius:10px;" />`;
     return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:0;vertical-align:middle;">${img}</td><td style="padding:0 12px;vertical-align:middle;">${name}</td></tr></table>`;
   }
   if (!isEmailSafeImageUrl(branding.academyLogoUrl)) {
@@ -394,15 +396,94 @@ export interface LocaleDefinition {
   readonly signatureWithoutLinks?: boolean;
 }
 
+/** Platform emails go to academies in Egypt; dates are shown on Cairo time and say so. */
+const EMAIL_TIME_ZONE = 'Africa/Cairo';
+const INSTANT_VALUE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}) UTC$/;
+const DAY_VALUE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const CAIRO_TIME = { en: ' (Cairo time)', ar: ' (بتوقيت القاهرة)' } as const;
+
+/** False when the parts rolled over (month 13, 31 February, 24:60): not a real date. */
+function isExactUtc(
+  at: Date,
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+): boolean {
+  return (
+    at.getUTCFullYear() === y &&
+    at.getUTCMonth() === mo - 1 &&
+    at.getUTCDate() === d &&
+    at.getUTCHours() === h &&
+    at.getUTCMinutes() === mi
+  );
+}
+
+/**
+ * A `…Date` value in the email's language: `2026-11-06 23:35 UTC` (the
+ * services' `formatLifecycleInstant`) becomes "7 November 2026 at 01:35
+ * (Cairo time)" / "7 نوفمبر 2026 في 1:35 ص (بتوقيت القاهرة)"; a bare
+ * `2026-11-06` becomes the calendar day. Arabic keeps Latin digits, like the
+ * dashboard. Anything else is returned unchanged.
+ */
+export function formatEmailDate(value: string, locale: CommunicationLocale): string {
+  const tag = locale === 'ar' ? 'ar-EG-u-nu-latn' : 'en-GB';
+  const instant = INSTANT_VALUE.exec(value);
+  if (instant) {
+    const [, y, mo, d, h, mi] = instant.map(Number);
+    const at = new Date(Date.UTC(y, mo - 1, d, h, mi));
+    if (!isExactUtc(at, y, mo, d, h, mi)) return value;
+    const text = new Intl.DateTimeFormat(tag, {
+      timeZone: EMAIL_TIME_ZONE,
+      dateStyle: 'long',
+      timeStyle: 'short',
+    }).format(at);
+    return `${text}${CAIRO_TIME[locale === 'ar' ? 'ar' : 'en']}`;
+  }
+  const day = DAY_VALUE.exec(value);
+  if (day) {
+    const [, y, mo, d] = day.map(Number);
+    const at = new Date(Date.UTC(y, mo - 1, d));
+    if (!isExactUtc(at, y, mo, d, 0, 0)) return value;
+    return new Intl.DateTimeFormat(tag, { timeZone: 'UTC', dateStyle: 'long' }).format(
+      at,
+    );
+  }
+  return value;
+}
+
+/** Every `…Date` string value, formatted for the email's language (see `formatEmailDate`). */
+function localizeDates(
+  values: TemplateValues,
+  locale: CommunicationLocale,
+): TemplateValues {
+  let out: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(values)) {
+    if (!key.endsWith('Date') || typeof value !== 'string') continue;
+    const formatted = formatEmailDate(value, locale);
+    if (formatted === value) continue;
+    out ??= { ...values };
+    out[key] = formatted;
+  }
+  return out ?? values;
+}
+
 /** Builds a `TemplateLocale` from copy alone — the layout supplies structure, escaping and the footer. */
 export function defineLocale(definition: LocaleDefinition): TemplateLocale {
+  const subject = (values: TemplateValues, context: TemplateRenderContext): string =>
+    definition.subject(localizeDates(values, context.locale), context);
+  const preheader = definition.preheader
+    ? (values: TemplateValues, context: TemplateRenderContext): string =>
+        definition.preheader!(localizeDates(values, context.locale), context)
+    : undefined;
   const layout = (
     values: TemplateValues,
     context: TemplateRenderContext,
   ): LayoutInput => ({
-    title: definition.subject(values, context),
-    preheader: definition.preheader?.(values, context),
-    paragraphs: definition.paragraphs(values, context),
+    title: subject(values, context),
+    preheader: preheader?.(values, context),
+    paragraphs: definition.paragraphs(localizeDates(values, context.locale), context),
     cta:
       definition.ctaLabel && context.actionUrl
         ? { label: definition.ctaLabel, url: context.actionUrl }
@@ -410,8 +491,8 @@ export function defineLocale(definition: LocaleDefinition): TemplateLocale {
     signatureWithoutLinks: definition.signatureWithoutLinks,
   });
   return {
-    subject: definition.subject,
-    preheader: definition.preheader,
+    subject,
+    preheader,
     text: (values, context) => renderTextLayout(layout(values, context), context),
     html: (values, context) => renderHtmlLayout(layout(values, context), context),
   };
