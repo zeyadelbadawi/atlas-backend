@@ -11,6 +11,9 @@
  *   atlas-academy-<academyId>   every page of that Academy, on every host
  *   atlas-host-<hostname>       every page served on that host
  *
+ * B3 — the marketing blog pages (apex `/blog…`, `/ar/blog…`, the blog
+ * sitemap) carry one more tag, `atlas-blog`, purged by `purgeBlog`.
+ *
  * This service purges those tags when what a page shows changes, so a
  * publish, a branding change, a domain change, a payment that brings a site
  * back, or a course edit shows on the next visit instead of after the
@@ -49,6 +52,8 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export const academyEdgeTag = (academyId: string): string => `atlas-academy-${academyId}`;
 export const hostEdgeTag = (hostname: string): string =>
   `atlas-host-${hostname.trim().toLowerCase().replace(/\.$/, '')}`;
+/** B3 — every marketing blog page the renderer caches (lists, posts, topic pages, the blog sitemap). */
+export const BLOG_EDGE_TAG = 'atlas-blog';
 
 @Injectable()
 export class EdgeCachePurgeService implements OnModuleDestroy {
@@ -91,6 +96,14 @@ export class EdgeCachePurgeService implements OnModuleDestroy {
         .filter((host): host is string => !!host && !!host.trim())
         .map(hostEdgeTag),
     );
+  }
+
+  /**
+   * B3 — every edge copy of the marketing blog: after a publish, unpublish,
+   * archive, delete or an edit of a public post.
+   */
+  purgeBlog(): void {
+    this.enqueue([BLOG_EDGE_TAG]);
   }
 
   /**
