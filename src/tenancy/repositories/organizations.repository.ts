@@ -5,6 +5,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Organization, Prisma, User } from '@prisma/client';
+import type { SelfReportedSource } from '../../common/attribution/acquisition-channel';
 
 export type OrganizationWithCounts = Organization & {
   _count: { academies: number; memberships: number };
@@ -56,6 +57,8 @@ export class OrganizationsRepository {
       readonly onboardingCompletedAt?: null;
       /** B0-ANL-04 — sanitised signup attribution; omitted = none stored. */
       readonly signupAttribution?: Prisma.InputJsonValue;
+      /** G1 — sanitised self-reported source; omitted = none stored. */
+      readonly selfReportedSource?: SelfReportedSource;
     },
   ): Promise<Organization> {
     return tx.organization.create({
@@ -67,6 +70,12 @@ export class OrganizationsRepository {
         ...(data.onboardingCompletedAt === null ? { onboardingCompletedAt: null } : {}),
         ...(data.signupAttribution !== undefined
           ? { signupAttribution: data.signupAttribution }
+          : {}),
+        ...(data.selfReportedSource
+          ? {
+              heardFrom: data.selfReportedSource.heardFrom,
+              heardFromOther: data.selfReportedSource.heardFromOther,
+            }
           : {}),
       },
     });

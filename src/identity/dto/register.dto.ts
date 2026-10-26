@@ -19,6 +19,7 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -29,6 +30,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { AttributionDto } from '../../common/attribution/attribution';
+import {
+  HEARD_FROM_OTHER_MAX,
+  SELF_REPORTED_CHANNELS,
+  type SelfReportedChannel,
+} from '../../common/attribution/acquisition-channel';
 import { ConsentsDto } from '../consents/consents.dto';
 import { IsNotCommonPassword } from '../password/common-password.validator';
 import {
@@ -143,6 +149,22 @@ export class RegisterDto {
   @ValidateNested()
   @Type(() => AttributionDto)
   readonly attribution?: AttributionDto;
+
+  /**
+   * G1 — "How did you first hear about us?" (optional). A voluntary answer,
+   * not tracking: stored on the organization whenever given (NOT gated by
+   * `FLAG_ATTRIBUTION_CAPTURE_MODE`), and only when the request creates
+   * one; any other signup ignores it. An unknown value is a 400.
+   */
+  @IsOptional()
+  @IsIn(SELF_REPORTED_CHANNELS)
+  readonly heardFrom?: SelfReportedChannel;
+
+  /** G1 — free text for `heardFrom = other`; scrubbed of personal data (dropped, never a 400). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(HEARD_FROM_OTHER_MAX)
+  readonly heardFromOther?: string;
 
   /**
    * Atlas mobile app (B4) — terms, privacy and the 13+ confirmation the app

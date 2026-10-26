@@ -53,6 +53,11 @@ import {
 } from '../../identity/phone/phone-number.validators';
 import { PHONE_INPUT_MAX_LENGTH } from '../../identity/phone/phone-number.policy';
 import { AttributionDto } from '../../common/attribution/attribution';
+import {
+  HEARD_FROM_OTHER_MAX,
+  SELF_REPORTED_CHANNELS,
+  type SelfReportedChannel,
+} from '../../common/attribution/acquisition-channel';
 
 /** Trims strings; leaves anything else alone so `IsString` can reject it. */
 function trim({ value }: TransformFnParams): unknown {
@@ -181,4 +186,19 @@ export class SubmitPlatformContactDto {
   @ValidateNested()
   @Type(() => AttributionDto)
   readonly attribution?: AttributionDto;
+
+  /**
+   * G1 — "How did you first hear about us?" (optional). Stored whenever
+   * given — a voluntary answer, not tracking, so not gated by
+   * `FLAG_ATTRIBUTION_CAPTURE_MODE`. An unknown value is a 400.
+   */
+  @IsOptional()
+  @IsIn(SELF_REPORTED_CHANNELS)
+  readonly heardFrom?: SelfReportedChannel;
+
+  /** G1 — free text for `heardFrom = other`; scrubbed of personal data (dropped, never a 400). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(HEARD_FROM_OTHER_MAX)
+  readonly heardFromOther?: string;
 }

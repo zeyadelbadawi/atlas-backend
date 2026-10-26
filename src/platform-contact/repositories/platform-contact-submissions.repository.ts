@@ -20,6 +20,7 @@ import {
   type PlatformContactSubmissionStatus,
   type PlatformContactTopic,
 } from '@prisma/client';
+import type { SelfReportedChannel } from '../../common/attribution/acquisition-channel';
 import type { PlatformContactSortField } from '../dto/list-platform-contact-submissions-query.dto';
 
 export interface InsertPlatformContactSubmission {
@@ -44,6 +45,9 @@ export interface InsertPlatformContactSubmission {
   readonly studentBand?: string | null;
   readonly preferredChannel?: string | null;
   readonly attribution?: Prisma.InputJsonValue;
+  /** G1 — the visitor's own "how did you hear about us?" answer (always stored when given). */
+  readonly heardFrom?: SelfReportedChannel | null;
+  readonly heardFromOther?: string | null;
 }
 
 export interface FindPlatformContactSubmissionsOptions {

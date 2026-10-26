@@ -19,6 +19,7 @@ import { toOrganizationResponse } from '../dto/organization.contract';
 import type { OrganizationResponse } from '../dto/organization.contract';
 import type { CreateOrganizationDto } from '../dto/create-organization.dto';
 import { cleanDisplayName } from '../../common/name-uniqueness/name-key';
+import type { SelfReportedSource } from '../../common/attribution/acquisition-channel';
 import {
   isOrganizationNameTaken,
   lockOrganizationName,
@@ -143,6 +144,8 @@ export class OrganizationsService {
       readonly nameField?: string;
       /** B0-ANL-04 — sanitised signup attribution (organization signup only). */
       readonly signupAttribution?: Prisma.InputJsonValue;
+      /** G1 — sanitised self-reported source (organization signup only). */
+      readonly selfReportedSource?: SelfReportedSource;
     },
     onCreated?: (
       tx: Prisma.TransactionClient,
@@ -177,6 +180,7 @@ export class OrganizationsService {
           ownerUserId: userId,
           onboardingCompletedAt: input.onboardingCompletedAt,
           signupAttribution: input.signupAttribution,
+          selfReportedSource: input.selfReportedSource,
         });
         await tx.$executeRawUnsafe('RELEASE SAVEPOINT organization_slug_attempt');
       } catch (error) {

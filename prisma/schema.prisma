@@ -577,6 +577,12 @@ model Organization {
   /// personal data: the server drops email- or phone-like values. Null =
   /// untagged signup, flag off, or a legacy creation path.
   signupAttribution     Json?                    @map("signup_attribution")
+  /// G1 — the owner's own "how did you first hear about us?" answer
+  /// (self-reported options only, CHECKed), stored whenever given at
+  /// organization signup (not gated by the attribution flag). Free text
+  /// only with `other`, scrubbed of personal data.
+  heardFrom             AcquisitionChannel?      @map("heard_from")
+  heardFromOther        String?                  @map("heard_from_other") @db.VarChar(100)
 
   memberships            OrganizationMembership[]
   academies              Academy[]
@@ -3132,6 +3138,9 @@ model PlatformContactSubmission {
   preferredChannel        String?                         @map("preferred_channel") @db.VarChar(16)
   /// B0-ANL-04 (part 2) — UTM values, referrer domain, landing template.
   attribution             Json?
+  /// G1 — the visitor's own "how did you first hear about us?" answer.
+  heardFrom               AcquisitionChannel?             @map("heard_from")
+  heardFromOther          String?                         @map("heard_from_other") @db.VarChar(100)
   /// B2 — the founding membership created from this application, if any.
   foundingMemberships     FoundingMembership[]
 
@@ -3395,6 +3404,74 @@ model LaunchChecklistItem {
 
   @@index([position])
   @@map("launch_checklist_items")
+}
+
+// ---------------------------------------------------------------------------
+// G1 — season capacity plan + CAC per channel (Platform Owner dashboard).
+// Platform data: Platform Owners only, reads included (RLS).
+// ---------------------------------------------------------------------------
+
+/// G1 — the closed acquisition channel vocabulary. Self-reported answers use
+/// a subset (CHECKed on the two tables that store them); spend may use any
+/// value except `unknown` (CHECK).
+enum AcquisitionChannel {
+  facebook
+  instagram
+  youtube
+  tiktok
+  whatsapp
+  teacher_referral
+  assistant_or_agency
+  google_search
+  google_ads
+  meta_ads
+  ai_assistant
+  event
+  email
+  partner
+  other
+  unknown
+
+  @@map("acquisition_channel")
+}
+
+/// G1 — one month's cash marketing spend on one channel (EGP minor units).
+/// `month` is the first day of the month (CHECK). Founder hours are never
+/// a cost here (owner decision: CAC = cash only).
+model MarketingSpendEntry {
+  id               String             @id @default(uuid())
+  month            DateTime           @db.Date
+  channel          AcquisitionChannel
+  amountMinorUnits BigInt             @map("amount_minor_units")
+  currency         String             @default("EGP") @db.VarChar(3)
+  description      String?            @db.VarChar(200)
+  version          Int                @default(1)
+  createdByUserId  String             @map("created_by_user_id")
+  updatedByUserId  String             @map("updated_by_user_id")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  @@index([month, channel])
+  @@map("marketing_spend_entries")
+}
+
+/// G1 — the season / capacity settings singleton (`id = 1`, seeded by the
+/// migration; no insert or delete policy).
+model GrowthSettings {
+  id                                Int      @id @db.SmallInt
+  seasonStart                       DateTime @default(dbgenerated("'2027-06-01'::date")) @map("season_start") @db.Date
+  seasonEnd                         DateTime @default(dbgenerated("'2027-09-30'::date")) @map("season_end") @db.Date
+  weeklyOwnerHours                  Decimal  @default(15) @map("weekly_owner_hours") @db.Decimal(5, 1)
+  onboardingCapPerWeek              Int      @default(5) @map("onboarding_cap_per_week")
+  minutesPerOnboarding              Int      @default(120) @map("minutes_per_onboarding")
+  supportMinutesPerPayingOrgPerWeek Int      @default(10) @map("support_minutes_per_paying_org_per_week")
+  hireWarnPayingOrgs                Int      @default(33) @map("hire_warn_paying_orgs")
+  hireNowPayingOrgs                 Int      @default(40) @map("hire_now_paying_orgs")
+  version                           Int      @default(1)
+  updatedByUserId                   String?  @map("updated_by_user_id")
+  updatedAt                         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("growth_settings")
 }
 
 /// Matches `Forum['status']` (`forum.types.ts`) exactly.
@@ -7039,12 +7116,16 @@ model ForensicWatermark {
 /// tenant policy). `isInternal` marks a test, demo or staff organization so
 /// platform metrics (MRR) can leave it out.
 model OrganizationPlatformFlags {
-  organizationId  String       @id @map("organization_id")
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  isInternal      Boolean      @default(false) @map("is_internal")
-  updatedByUserId String?      @map("updated_by_user_id")
-  updatedBy       User?        @relation("OrganizationPlatformFlagsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
-  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at")
+  organizationId             String              @id @map("organization_id")
+  organization               Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isInternal                 Boolean             @default(false) @map("is_internal")
+  /// G1 — the Platform Owner's manual acquisition channel (founder-led
+  /// signups: WhatsApp, calls). Wins over every other signal.
+  acquisitionChannelOverride AcquisitionChannel? @map("acquisition_channel_override")
+  acquisitionOverrideNote    String?             @map("acquisition_override_note") @db.VarChar(200)
+  updatedByUserId            String?             @map("updated_by_user_id")
+  updatedBy                  User?               @relation("OrganizationPlatformFlagsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  updatedAt                  DateTime            @default(now()) @updatedAt @map("updated_at")
 
   @@map("organization_platform_flags")
 }
