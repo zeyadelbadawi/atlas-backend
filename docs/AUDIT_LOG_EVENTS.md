@@ -300,6 +300,23 @@ writer stores.
 | `platform.founding.ended` | platform | platform | no | organizationId, seatNumber, lockEndsAt |
 | `platform.founding.emailed` | platform | platform | no | organizationId, sendId, audience, recipientCount |
 | `platform.founding.renewal_price_notice_sent` | platform | platform | no | organizationId, periodEndAt, renewalAmount, lockedAmount, currency |
+| `platform.blog_post.created` | platform | platform | no | slug, kind, topic |
+| `platform.blog_post.updated` | platform | platform | no | slug, status, changedFields |
+| `platform.blog_post.published` | platform | platform | no | slug, status (published or scheduled), previousStatus, publishAt |
+| `platform.blog_post.unpublished` | platform | platform | no | slug, previousStatus |
+| `platform.blog_post.archived` | platform | platform | no | slug, previousStatus |
+| `platform.blog_post.deleted` | platform | platform | no | slug, status |
+| `platform.blog_image.uploaded` | platform | platform | no | width, height, sizeBytes |
+| `platform.site_announcement.created` | platform | platform | no | surface |
+| `platform.site_announcement.updated` | platform | platform | no | surface, status, changedFields |
+| `platform.site_announcement.activated` | platform | platform | no | surface, previousStatus, startsAt, endsAt |
+| `platform.site_announcement.deactivated` | platform | platform | no | surface, previousStatus |
+| `platform.site_announcement.archived` | platform | platform | no | surface, previousStatus |
+| `platform.site_announcement.deleted` | platform | platform | no | surface, status |
+| `platform.launch_checklist.item_created` | platform | platform | no | section |
+| `platform.launch_checklist.item_updated` | platform | platform | no | section, changedFields, done |
+| `platform.launch_checklist.item_deleted` | platform | platform | no | section |
+| `platform.launch_checklist.reordered` | platform | platform | no | itemCount |
 | `platform.watermark.looked_up` | security | platform | no | found, surface, accountLinked (target label = the looked-up code; never the name, email or phone it revealed) |
 | `platform.campaign.sent` | platform | platform | no | audienceType, channels, recipientCount, mailCount, inAppCount |
 | `academy.message.sent` | academy | academy | yes | audienceType, channels, recipientCount, mailCount, inAppCount |
@@ -313,7 +330,10 @@ writer stores.
   Stored, Platform-only.
 - **Platform operator configuration** (`plan.*`, `platform_settings.*`,
   `payment_method.*`, `commission_config.*`, `add_on.catalog_status_changed`,
-  `observability.*`, `platform.contact_submission.*`) — Platform-only.
+  `observability.*`, `platform.contact_submission.*`, the B3 launch tooling
+  `platform.blog_post.*`, `platform.blog_image.*`,
+  `platform.site_announcement.*`, `platform.launch_checklist.*`) —
+  Platform-only.
 - **Forensic watermark lookups** (`platform.watermark.looked_up`) — every
   lookup, found or not, is written in the same transaction as the read;
   Platform-only, and never carries the identity the lookup disclosed

@@ -255,7 +255,39 @@ export class PublicMediaController {
     response.setHeader('Content-Length', body.byteLength);
     response.status(200).end(body);
   }
+
+  /**
+   * B3 — marketing blog and pop-up images (`POST /platform-blog-images`).
+   * Public by purpose: every object under this prefix was uploaded by a
+   * Platform Owner for the public marketing site, re-encoded as WebP, and
+   * named by a random UUID that is never reused, so the bytes behind a
+   * name never change (`immutable`). One strict parameter (a UUID plus
+   * `.webp`), so nothing outside `platform/blog/` can be addressed.
+   */
+  @Get('platform/blog/:fileName')
+  async servePlatformBlogImage(
+    @Param('fileName') fileName: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    const match = PLATFORM_BLOG_IMAGE_PATTERN.exec(fileName);
+    if (!match) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    let body: Buffer;
+    try {
+      body = await this.storage.getObject(`platform/blog/${match[1].toLowerCase()}.webp`);
+    } catch {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    response.setHeader('Cache-Control', CACHE_CONTROL.branding);
+    response.setHeader('Content-Type', 'image/webp');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Content-Length', body.byteLength);
+    response.status(200).end(body);
+  }
 }
+
+/** B3 — `platform/blog/<uuid>.webp`, written only by `BlogImagesService` (Platform Owners). */
+const PLATFORM_BLOG_IMAGE_PATTERN =
+  /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.webp$/;
 
 /**
  * `?w=&f=` → the variant asked for; absent (both missing) → `null`. A
