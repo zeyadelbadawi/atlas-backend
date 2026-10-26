@@ -157,10 +157,16 @@ describe('resolveAcquisitionChannel', () => {
       resolveAcquisitionChannel({
         override: 'whatsapp',
         heardFrom: 'facebook',
-        attribution: { utmSource: 'google', utmMedium: 'cpc', referrerDomain: 'tiktok.com' },
+        attribution: {
+          utmSource: 'google',
+          utmMedium: 'cpc',
+          referrerDomain: 'tiktok.com',
+        },
       }),
     ).toEqual({ channel: 'whatsapp', decidedBy: 'override' });
-    expect(resolveAcquisitionChannel({ override: 'unknown', heardFrom: 'facebook' })).toEqual({
+    expect(
+      resolveAcquisitionChannel({ override: 'unknown', heardFrom: 'facebook' }),
+    ).toEqual({
       channel: 'unknown',
       decidedBy: 'override',
     });
@@ -224,7 +230,10 @@ describe('resolveAcquisitionChannel', () => {
     expect(
       resolveAcquisitionChannel({
         heardFrom: 'other',
-        attribution: { referrerDomain: 'dashboard.atlas.example', landingTemplate: 'home' },
+        attribution: {
+          referrerDomain: 'dashboard.atlas.example',
+          landingTemplate: 'home',
+        },
         platformBaseDomain: base,
       } as never),
     ).toEqual({ channel: 'other', decidedBy: 'self_reported_other' });
@@ -238,7 +247,10 @@ describe('resolveAcquisitionChannel', () => {
   });
 
   it('6. nothing at all → unknown', () => {
-    expect(resolveAcquisitionChannel({})).toEqual({ channel: 'unknown', decidedBy: 'none' });
+    expect(resolveAcquisitionChannel({})).toEqual({
+      channel: 'unknown',
+      decidedBy: 'none',
+    });
     expect(
       resolveAcquisitionChannel({
         override: null,

@@ -70,6 +70,7 @@ import { FoundingModule } from './founding/founding.module';
 import { BlogModule } from './blog/blog.module';
 import { SiteAnnouncementsModule } from './site-announcements/site-announcements.module';
 import { LaunchChecklistModule } from './launch-checklist/launch-checklist.module';
+import { GrowthModule } from './growth/growth.module';
 import { ForensicWatermarkModule } from './forensic-watermark/forensic-watermark.module';
 import { CustomerRequestsModule } from './customer-requests/customer-requests.module';
 import { PrivacyRequestsModule } from './privacy-requests/privacy-requests.module';
@@ -225,6 +226,8 @@ import { EdgeCacheModule } from './edge-cache/edge-cache.module';
     BlogModule,
     SiteAnnouncementsModule,
     LaunchChecklistModule,
+    // G1 — season capacity plan + CAC per channel (Platform Owner).
+    GrowthModule,
     // Mandatory forensic video watermark (docs/FORENSIC_WATERMARK.md).
     ForensicWatermarkModule,
     CustomerRequestsModule,

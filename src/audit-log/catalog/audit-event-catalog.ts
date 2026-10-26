@@ -1484,6 +1484,47 @@ export const AUDIT_EVENT_DEFINITIONS = [
     false,
     ['itemCount'],
   ),
+  // G1 — season capacity plan + CAC per channel (`src/growth`).
+  ev(
+    'platform.growth.settings_updated',
+    'platform',
+    'growth_settings',
+    'platform',
+    false,
+    ['changedFields'],
+  ),
+  ev(
+    'platform.growth.spend_created',
+    'platform',
+    'marketing_spend_entry',
+    'platform',
+    false,
+    ['month', 'channel', 'amountMinorUnits'],
+  ),
+  ev(
+    'platform.growth.spend_updated',
+    'platform',
+    'marketing_spend_entry',
+    'platform',
+    false,
+    ['month', 'channel', 'amountMinorUnits', 'changedFields'],
+  ),
+  ev(
+    'platform.growth.spend_deleted',
+    'platform',
+    'marketing_spend_entry',
+    'platform',
+    false,
+    ['month', 'channel', 'amountMinorUnits'],
+  ),
+  ev(
+    'platform.growth.organization_channel_set',
+    'platform',
+    'organization',
+    'platform',
+    false,
+    ['channel', 'previousChannel'],
+  ),
   // B0-SUP-04 — the daily enquiry retention run (FLAG_CONTACT_RETENTION_MODE=on).
   // One row per run that deleted anything: the count and the period only.
   ev(

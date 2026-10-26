@@ -62,12 +62,7 @@ export type SpendChannel = Exclude<AcquisitionChannelValue, 'unknown'>;
 export const HEARD_FROM_OTHER_MAX = 100;
 
 export type ChannelDecidedBy =
-  | 'override'
-  | 'self_reported'
-  | 'utm'
-  | 'referrer'
-  | 'self_reported_other'
-  | 'none';
+  'override' | 'self_reported' | 'utm' | 'referrer' | 'self_reported_other' | 'none';
 
 export interface ChannelResolverInput {
   readonly override?: AcquisitionChannelValue | null;
@@ -214,7 +209,8 @@ export function resolveAcquisitionChannel(input: ChannelResolverInput): Resolved
     ? channelFromReferrer(attribution.referrerDomain, input.platformBaseDomain)
     : null;
   if (fromReferrer) return { channel: fromReferrer, decidedBy: 'referrer' };
-  if (heardFrom === 'other') return { channel: 'other', decidedBy: 'self_reported_other' };
+  if (heardFrom === 'other')
+    return { channel: 'other', decidedBy: 'self_reported_other' };
   return { channel: 'unknown', decidedBy: 'none' };
 }
 
