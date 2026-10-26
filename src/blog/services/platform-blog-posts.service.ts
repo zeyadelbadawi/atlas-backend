@@ -45,6 +45,8 @@ import {
   affectsPublicSite,
   hasTranslation,
   incompleteLocales,
+  effectiveStatus,
+  effectiveStatusWhere,
   isPubliclyVisible,
   readingMinutes,
   resolvePublish,
@@ -296,18 +298,22 @@ export class PlatformBlogPostsService {
     const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
     const term = query.search?.trim();
     const where: Prisma.PlatformBlogPostWhereInput = {
-      ...(query.status ? { status: query.status } : {}),
+      // By the status the dashboard shows: a scheduled post whose time has
+      // come is listed under "published" (`effectiveStatus`).
+      AND: [
+        query.status ? effectiveStatusWhere(query.status, now) : {},
+        term
+          ? {
+              OR: [
+                { slug: { contains: term, mode: 'insensitive' } },
+                { titleEn: { contains: term, mode: 'insensitive' } },
+                { titleAr: { contains: term, mode: 'insensitive' } },
+              ],
+            }
+          : {},
+      ],
       ...(query.topic ? { topic: query.topic } : {}),
       ...(query.kind ? { kind: query.kind } : {}),
-      ...(term
-        ? {
-            OR: [
-              { slug: { contains: term, mode: 'insensitive' } },
-              { titleEn: { contains: term, mode: 'insensitive' } },
-              { titleAr: { contains: term, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
     };
     const sortBy = query.sortBy ?? query.sort ?? 'updatedAt';
     const direction = query.sortDirection ?? (sortBy === 'title' ? 'asc' : 'desc');
@@ -875,7 +881,7 @@ export class PlatformBlogPostsService {
       slug: row.slug,
       kind: row.kind,
       topic: row.topic,
-      status: row.status,
+      status: effectiveStatus(row, now),
       publishAt: row.publishAt?.toISOString() ?? null,
       isPublic: isPubliclyVisible(row, now),
       featured: row.featured,

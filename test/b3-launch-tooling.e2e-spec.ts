@@ -304,6 +304,22 @@ describe('B3 launch tooling (e2e)', () => {
         data: { publishAt: new Date(Date.now() - 1000) },
       });
       await http().get(`/public/blog/posts/${slug}`).expect(200);
+      // …and the Platform Owner sees, counts and filters it as published.
+      const live = await http()
+        .get(`/platform-blog-posts/${created.body.id}`)
+        .set(bearer(po.accessToken))
+        .expect(200);
+      expect(live.body).toMatchObject({ status: 'published', isPublic: true });
+      const published = await http()
+        .get(`/platform-blog-posts?status=published&search=${slug}`)
+        .set(bearer(po.accessToken))
+        .expect(200);
+      expect(published.body.items.map((i: { slug: string }) => i.slug)).toEqual([slug]);
+      const stillScheduled = await http()
+        .get(`/platform-blog-posts?status=scheduled&search=${slug}`)
+        .set(bearer(po.accessToken))
+        .expect(200);
+      expect(stillScheduled.body.items).toEqual([]);
     });
 
     it('preview returns the public shape for a draft; slug and markdown rules apply', async () => {

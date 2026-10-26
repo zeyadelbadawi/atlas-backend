@@ -5,6 +5,8 @@
 import type { PlatformBlogPost } from '@prisma/client';
 import {
   affectsPublicSite,
+  effectiveStatus,
+  effectiveStatusWhere,
   incompleteLocales,
   isPubliclyVisible,
   isTranslationComplete,
@@ -78,6 +80,42 @@ describe('visibility', () => {
     expect(affectsPublicSite('archived')).toBe(false);
     expect(affectsPublicSite('scheduled')).toBe(true);
     expect(affectsPublicSite('published')).toBe(true);
+  });
+});
+
+describe('effective status (what the Platform Owner sees)', () => {
+  it('a scheduled post whose time has come reads as published', () => {
+    expect(effectiveStatus(row({ status: 'scheduled', publishAt: PAST }), NOW)).toBe(
+      'published',
+    );
+    expect(effectiveStatus(row({ status: 'scheduled', publishAt: NOW }), NOW)).toBe(
+      'published',
+    );
+  });
+
+  it('every other row keeps its stored status', () => {
+    expect(effectiveStatus(row({ status: 'scheduled', publishAt: FUTURE }), NOW)).toBe(
+      'scheduled',
+    );
+    expect(effectiveStatus(row({ status: 'published', publishAt: PAST }), NOW)).toBe(
+      'published',
+    );
+    expect(effectiveStatus(row({ status: 'draft' }), NOW)).toBe('draft');
+    expect(effectiveStatus(row({ status: 'archived', publishAt: PAST }), NOW)).toBe(
+      'archived',
+    );
+  });
+
+  it('filters the list the same way', () => {
+    expect(effectiveStatusWhere('published', NOW)).toEqual({
+      OR: [{ status: 'published' }, { status: 'scheduled', publishAt: { lte: NOW } }],
+    });
+    expect(effectiveStatusWhere('scheduled', NOW)).toEqual({
+      status: 'scheduled',
+      OR: [{ publishAt: null }, { publishAt: { gt: NOW } }],
+    });
+    expect(effectiveStatusWhere('draft', NOW)).toEqual({ status: 'draft' });
+    expect(effectiveStatusWhere('archived', NOW)).toEqual({ status: 'archived' });
   });
 });
 

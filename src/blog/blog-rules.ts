@@ -4,7 +4,7 @@
  * resolved, and the server-computed reading time. No I/O here, so every
  * rule is unit-tested directly (`blog-rules.spec.ts`).
  */
-import type { PlatformBlogPost, PlatformBlogPostStatus } from '@prisma/client';
+import type { PlatformBlogPost, PlatformBlogPostStatus, Prisma } from '@prisma/client';
 
 export const BLOG_LOCALES = ['en', 'ar'] as const;
 export type BlogLocale = (typeof BLOG_LOCALES)[number];
@@ -138,6 +138,36 @@ export function isPubliclyVisible(
     row.publishAt !== null &&
     row.publishAt.getTime() <= now.getTime()
   );
+}
+
+/**
+ * The status the Platform Owner sees: a scheduled post whose time has come
+ * IS published (nothing rewrites the row when the time passes), so the
+ * dashboard shows, counts and filters it as published.
+ */
+export function effectiveStatus(
+  row: Pick<PlatformBlogPost, 'status' | 'publishAt'>,
+  now: Date,
+): PlatformBlogPostStatus {
+  return row.status === 'scheduled' && isPubliclyVisible(row, now)
+    ? 'published'
+    : row.status;
+}
+
+/** The `status` filter of the Platform Owner list, by effective status. */
+export function effectiveStatusWhere(
+  status: PlatformBlogPostStatus,
+  now: Date,
+): Prisma.PlatformBlogPostWhereInput {
+  if (status === 'published') {
+    return {
+      OR: [{ status: 'published' }, { status: 'scheduled', publishAt: { lte: now } }],
+    };
+  }
+  if (status === 'scheduled') {
+    return { status: 'scheduled', OR: [{ publishAt: null }, { publishAt: { gt: now } }] };
+  }
+  return { status };
 }
 
 /** Statuses whose rows the public can see now or will see without another write. */
