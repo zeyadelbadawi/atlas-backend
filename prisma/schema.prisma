@@ -3196,6 +3196,207 @@ model FoundingMembership {
   @@map("founding_memberships")
 }
 
+// ---------------------------------------------------------------------------
+// B3 — launch tooling, managed from the Platform Owner dashboard: the
+// marketing blog (`platform_blog_posts`; `blog_posts` is the academy
+// Knowledge Blog above), site announcements (marketing banner / pop-up and
+// the dashboard banner) and the launch checklist. Platform data: written
+// only by Platform Owners (RLS); anonymous reads see only live rows.
+// ---------------------------------------------------------------------------
+
+enum PlatformBlogPostKind {
+  pillar
+  cluster
+  article
+
+  @@map("platform_blog_post_kind")
+}
+
+enum PlatformBlogTopic {
+  protection
+  payments
+  exams
+  website
+  season
+  teaching
+  news
+
+  @@map("platform_blog_topic")
+}
+
+/// Public = `scheduled`/`published` with `publish_at` at or before now.
+enum PlatformBlogPostStatus {
+  draft
+  scheduled
+  published
+  archived
+
+  @@map("platform_blog_post_status")
+}
+
+/// B3 — a marketing blog post, one slug for both languages. Each language
+/// is a column group (`*_en`, `*_ar`); a language is "present" when any of
+/// its title/excerpt/body is set. Markdown is stored as written (validated
+/// for lengths and link/image URL schemes; the renderer sanitizes).
+/// `reading_minutes_*` is computed by the server on every write.
+model PlatformBlogPost {
+  id               String                 @id @default(uuid())
+  slug             String                 @unique @db.VarChar(80)
+  kind             PlatformBlogPostKind
+  topic            PlatformBlogTopic
+  status           PlatformBlogPostStatus @default(draft)
+  publishAt        DateTime?              @map("publish_at")
+  /// The first time the post went public (kept across unpublish/republish).
+  publishedAt      DateTime?              @map("published_at")
+  featured         Boolean                @default(false)
+  coverImageUrl    String?                @map("cover_image_url") @db.VarChar(2000)
+  coverImageWidth  Int?                   @map("cover_image_width")
+  coverImageHeight Int?                   @map("cover_image_height")
+  authorName       String                 @default("Atlas team") @map("author_name") @db.VarChar(80)
+  relatedPostIds   String[]               @default([]) @map("related_post_ids")
+  titleEn          String?                @map("title_en") @db.VarChar(140)
+  excerptEn        String?                @map("excerpt_en") @db.VarChar(300)
+  bodyEn           String?                @map("body_en")
+  coverAltEn       String?                @map("cover_alt_en") @db.VarChar(200)
+  seoTitleEn       String?                @map("seo_title_en") @db.VarChar(70)
+  seoDescriptionEn String?                @map("seo_description_en") @db.VarChar(170)
+  readingMinutesEn Int?                   @map("reading_minutes_en")
+  titleAr          String?                @map("title_ar") @db.VarChar(140)
+  excerptAr        String?                @map("excerpt_ar") @db.VarChar(300)
+  bodyAr           String?                @map("body_ar")
+  coverAltAr       String?                @map("cover_alt_ar") @db.VarChar(200)
+  seoTitleAr       String?                @map("seo_title_ar") @db.VarChar(70)
+  seoDescriptionAr String?                @map("seo_description_ar") @db.VarChar(170)
+  readingMinutesAr Int?                   @map("reading_minutes_ar")
+  /// Optimistic concurrency: every write must name the version it read.
+  version          Int                    @default(1)
+  createdByUserId  String                 @map("created_by_user_id")
+  updatedByUserId  String                 @map("updated_by_user_id")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  @@index([status, publishAt(sort: Desc)])
+  @@index([topic, status, publishAt(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+  @@map("platform_blog_posts")
+}
+
+enum SiteAnnouncementSurface {
+  marketing_banner
+  marketing_popup
+  dashboard_banner
+
+  @@map("site_announcement_surface")
+}
+
+/// Live = `active` and inside the optional [starts_at, ends_at) window.
+enum SiteAnnouncementStatus {
+  draft
+  active
+  archived
+
+  @@map("site_announcement_status")
+}
+
+enum SiteAnnouncementTone {
+  info
+  promo
+  success
+  warning
+
+  @@map("site_announcement_tone")
+}
+
+enum SiteAnnouncementPopupFrequency {
+  once
+  session
+  always
+
+  @@map("site_announcement_popup_frequency")
+}
+
+enum SiteAnnouncementAudience {
+  all
+  organization_owners
+  academy_staff
+
+  @@map("site_announcement_audience")
+}
+
+/// B3 — a marketing banner, a marketing pop-up or a dashboard banner. Each
+/// language is a column group; a language is "present" when its body is
+/// set. Plain text only. The view/click/dismiss counters are written only
+/// through `record_site_announcement_event` (live rows only).
+model SiteAnnouncement {
+  id                String                         @id @default(uuid())
+  name              String                         @db.VarChar(120)
+  surface           SiteAnnouncementSurface
+  status            SiteAnnouncementStatus         @default(draft)
+  startsAt          DateTime?                      @map("starts_at")
+  endsAt            DateTime?                      @map("ends_at")
+  tone              SiteAnnouncementTone           @default(info)
+  titleEn           String?                        @map("title_en") @db.VarChar(120)
+  bodyEn            String?                        @map("body_en") @db.VarChar(600)
+  ctaLabelEn        String?                        @map("cta_label_en") @db.VarChar(40)
+  titleAr           String?                        @map("title_ar") @db.VarChar(120)
+  bodyAr            String?                        @map("body_ar") @db.VarChar(600)
+  ctaLabelAr        String?                        @map("cta_label_ar") @db.VarChar(40)
+  ctaUrl            String?                        @map("cta_url") @db.VarChar(2000)
+  imageUrl          String?                        @map("image_url") @db.VarChar(2000)
+  /// Marketing surfaces: path prefixes without the locale; empty = every page.
+  pages             String[]                       @default([])
+  dismissible       Boolean                        @default(true)
+  popupDelaySeconds Int                            @default(0) @map("popup_delay_seconds")
+  popupFrequency    SiteAnnouncementPopupFrequency @default(once) @map("popup_frequency")
+  audience          SiteAnnouncementAudience       @default(all)
+  priority          Int                            @default(0)
+  version           Int                            @default(1)
+  views             Int                            @default(0)
+  clicks            Int                            @default(0)
+  dismissals        Int                            @default(0)
+  createdByUserId   String                         @map("created_by_user_id")
+  updatedByUserId   String                         @map("updated_by_user_id")
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+
+  @@index([status, surface, priority(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+  @@map("site_announcements")
+}
+
+enum LaunchChecklistSection {
+  product
+  content
+  marketing
+  communication
+  operations
+
+  @@map("launch_checklist_section")
+}
+
+/// B3 — one item of the Platform Owner's launch checklist (seeded by the
+/// migration). Platform Owner only, for reads too.
+model LaunchChecklistItem {
+  id              String                 @id @default(uuid())
+  section         LaunchChecklistSection
+  title           String                 @db.VarChar(160)
+  description     String                 @default("") @db.VarChar(1000)
+  linkUrl         String?                @map("link_url") @db.VarChar(2000)
+  done            Boolean                @default(false)
+  doneAt          DateTime?              @map("done_at")
+  doneByUserId    String?                @map("done_by_user_id")
+  notes           String                 @default("") @db.VarChar(2000)
+  position        Int
+  version         Int                    @default(1)
+  createdByUserId String?                @map("created_by_user_id")
+  updatedByUserId String?                @map("updated_by_user_id")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  @@index([position])
+  @@map("launch_checklist_items")
+}
+
 /// Matches `Forum['status']` (`forum.types.ts`) exactly.
 enum ForumStatus {
   open

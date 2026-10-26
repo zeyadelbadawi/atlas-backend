@@ -18,7 +18,8 @@
  *  - `content` (5 MB): rich text whose validated maximum is well over
  *    100 KB — quiz authoring (100 questions × prompt/options/explanation),
  *    quiz answers (100 × 20 000-character essays), campaign/academy
- *    message bodies (50 KB of HTML, JSON-escaped), FAQ entries.
+ *    message bodies (50 KB of HTML, JSON-escaped), FAQ entries, the B3
+ *    marketing blog's posts (two 60 000-character markdown bodies).
  *  - `webhook` (1 MB): provider deliveries (Zoom, Cloudflare Stream, email
  *    providers, payments), verified against their exact bytes.
  *
@@ -30,7 +31,9 @@
  * proves every entry names a real route, and the e2e spec proves a small
  * route refuses 101 KB while an upload route still accepts its payload.
  * URL-encoded bodies keep Nest's 100 KB default; uploads are base64 JSON
- * or direct-to-storage presigned PUTs, never multipart through the API.
+ * or direct-to-storage presigned PUTs. The one multipart route, the
+ * Platform Owner's `POST platform-blog-images` (B3), is parsed by multer
+ * only after its guards pass, with its own 5 MB file limit.
  */
 import { json } from 'express';
 import type { RequestHandler } from 'express';
@@ -113,6 +116,9 @@ export const ROUTE_BODY_LIMITS: readonly RouteBodyLimit[] = [
   { method: 'POST', path: 'academies/:id/messages/preview', tier: 'content' },
   { method: 'POST', path: 'platform-communications/campaigns', tier: 'content' },
   { method: 'POST', path: 'platform-communications/campaigns/preview', tier: 'content' },
+  // B3 — marketing blog posts: two 60 000-character markdown bodies.
+  { method: 'POST', path: 'platform-blog-posts', tier: 'content' },
+  { method: 'PATCH', path: 'platform-blog-posts/:id', tier: 'content' },
   // --- provider webhooks ----------------------------------------------------
   { method: 'POST', path: 'webhooks/email/:provider', tier: 'webhook' },
   { method: 'POST', path: 'webhooks/video/stream', tier: 'webhook' },

@@ -252,6 +252,17 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'POST auth/apple/create-account': 'single-use step secret; registration rules apply',
   'GET public/signup-options': 'which signup paths are enabled',
   'POST public/contact': 'marketing contact form; rate-limited',
+  // B3 — the marketing blog and site announcements (public by purpose; RLS
+  // shows only public posts and live announcements to a context-less read).
+  'GET public/blog/posts':
+    'published marketing blog posts; no drafts, no internal fields',
+  'GET public/blog/posts/:slug': 'one published marketing blog post; 404 otherwise',
+  'GET public/blog/sitemap': 'slugs and dates of published marketing blog posts',
+  'GET public/media/platform/blog/:fileName':
+    'Platform Owner blog/pop-up images (random UUID names, WebP only)',
+  'GET public/site-announcements': 'live marketing banners and pop-up for a page',
+  'POST public/site-announcements/:id/events':
+    'view/click/dismiss beacon; live announcements only, counters only, rate-limited',
   'GET verify/:code': 'public certificate verification by unguessable code',
   // --- links from emails (the token is the authorization) -----------------
   'GET communications/unsubscribe': 'shows the signed unsubscribe token',

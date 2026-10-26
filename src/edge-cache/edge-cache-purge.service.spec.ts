@@ -4,6 +4,7 @@
  */
 import { of } from 'rxjs';
 import {
+  BLOG_EDGE_TAG,
   EdgeCachePurgeService,
   academyEdgeTag,
   hostEdgeTag,
@@ -73,6 +74,28 @@ describe('EdgeCachePurgeService', () => {
     );
     expect(calls[0].auth).toBe('Bearer purge-token');
     expect(calls[0].tags).toEqual([`atlas-academy-${ACADEMY}`]);
+    service.onModuleDestroy();
+  });
+
+  it('B3: purges the marketing blog by its own tag, twice like every purge', async () => {
+    const { service, calls } = build();
+    expect(BLOG_EDGE_TAG).toBe('atlas-blog');
+    service.purgeBlog();
+    service.purgeBlog();
+    await advance(1_500);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tags).toEqual(['atlas-blog']);
+    await advance(30_000);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].tags).toEqual(['atlas-blog']);
+    service.onModuleDestroy();
+  });
+
+  it('B3: a blog purge is a no-op without a purge token', async () => {
+    const { service, calls } = build({ token: '' });
+    service.purgeBlog();
+    await advance(60_000);
+    expect(calls).toHaveLength(0);
     service.onModuleDestroy();
   });
 
