@@ -110,16 +110,25 @@ export function looksLikePersonalData(value: string): boolean {
 const LONE_SURROGATE =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function cleanText(raw: unknown): string | undefined {
+/**
+ * One free-text value under the personal-data rules above: control
+ * characters removed, whitespace collapsed, email- or phone-like text
+ * dropped, capped at `max` characters. `undefined` = nothing to store.
+ * Also used for the G1 "how did you hear about us? — other" answer.
+ */
+export function cleanAttributionText(
+  raw: unknown,
+  max: number = ATTRIBUTION_VALUE_MAX,
+): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const text = raw.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
   if (text.length === 0 || looksLikePersonalData(text)) return undefined;
   // Cut, then drop any half of a surrogate pair the cut (or the input)
   // left behind: Postgres rejects JSON with a lone surrogate.
-  return (
-    text.slice(0, ATTRIBUTION_VALUE_MAX).replace(LONE_SURROGATE, '').trim() || undefined
-  );
+  return text.slice(0, max).replace(LONE_SURROGATE, '').trim() || undefined;
 }
+
+const cleanText = (raw: unknown): string | undefined => cleanAttributionText(raw);
 
 function cleanHost(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;

@@ -21,6 +21,7 @@ import { OrganizationSubscriptionBootstrapService } from '../../plans/services/o
 import { TrialRedemptionService } from '../../plans/services/trial-redemption.service';
 import { TenantUsageRecomputeProducer } from '../../plans/queue/tenant-usage-recompute.producer';
 import { PlatformOwnerAlertService } from '../../communications/services/platform-owner-alert.service';
+import type { SelfReportedSource } from '../../common/attribution/acquisition-channel';
 import type {
   PreparedSignupOrganization,
   SignupOrganizationPort,
@@ -63,6 +64,7 @@ export class SignupOrganizationService implements SignupOrganizationPort {
       readonly prepared: PreparedSignupOrganization;
       readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
       readonly signupAttribution?: Prisma.InputJsonValue;
+      readonly selfReportedSource?: SelfReportedSource;
     },
   ): Promise<SignupOrganizationResult> {
     await this.organizationsService.createInTransaction(
@@ -75,6 +77,7 @@ export class SignupOrganizationService implements SignupOrganizationPort {
         // W4 — a name conflict is reported on the signup form's field.
         nameField: 'organizationName',
         signupAttribution: input.signupAttribution,
+        selfReportedSource: input.selfReportedSource,
       },
       (innerTx, created) =>
         this.subscriptionBootstrapService.bootstrapSubscription(innerTx, created.id),

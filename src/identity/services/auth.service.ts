@@ -24,6 +24,10 @@ import type {
 } from '../../config/configuration';
 import { sanitizeAttribution } from '../../common/attribution/attribution';
 import type { AttributionDto } from '../../common/attribution/attribution';
+import {
+  sanitizeSelfReportedSource,
+  type SelfReportedChannel,
+} from '../../common/attribution/acquisition-channel';
 import { UsersRepository } from '../repositories/users.repository';
 import { RefreshTokensRepository } from '../repositories/refresh-tokens.repository';
 import {
@@ -454,6 +458,9 @@ export class AuthService {
     whatsappConsent?: boolean;
     /** B0-ANL-04 — client-sent attribution; sanitised before storage. */
     attribution?: AttributionDto;
+    /** G1 — "how did you first hear about us?" (organization signup only; not flag-gated). */
+    heardFrom?: SelfReportedChannel;
+    heardFromOther?: string;
     /** Atlas mobile app (B4) — stored only with a brand-new account. */
     consents?: ConsentsDto;
     /** Forensic only (recorded on a trial redemption), never a decision input. */
@@ -716,6 +723,11 @@ export class AuthService {
       preparedOrganization && leadCapture.attributionCaptureMode === 'on'
         ? (sanitizeAttribution(input.attribution) ?? undefined)
         : undefined;
+    // G1 — a voluntary answer, not tracking: stored whenever the request
+    // creates an organization, whatever the attribution flag says.
+    const selfReportedSource = preparedOrganization
+      ? (sanitizeSelfReportedSource(input.heardFrom, input.heardFromOther) ?? undefined)
+      : undefined;
 
     const pendingApprovalOutboxIds: (string | null)[] = [];
     let organizationResult: SignupOrganizationResult | undefined;
@@ -809,6 +821,7 @@ export class AuthService {
                 ...(signupAttribution
                   ? { signupAttribution: { ...signupAttribution } }
                   : {}),
+                ...(selfReportedSource ? { selfReportedSource } : {}),
               },
             );
           }
