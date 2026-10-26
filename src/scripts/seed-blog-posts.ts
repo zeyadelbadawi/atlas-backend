@@ -171,11 +171,13 @@ async function publishIfNeeded(
     wanted === undefined ||
     (current.publishAt !== null &&
       new Date(current.publishAt).getTime() === wanted.getTime());
+  // `current.status` is the effective status: a scheduled post whose time
+  // has come reads as published, and a "published" entry dated in the future
+  // is stored as scheduled. Either live state at the wanted time is applied;
+  // an entry without a date wants the post published now.
+  const live = current.status === 'published' || current.status === 'scheduled';
   const alreadyThere =
-    (entry.status === 'published' &&
-      current.status === 'published' &&
-      (sameTime || !wanted)) ||
-    (entry.status === 'scheduled' && current.status === 'scheduled' && sameTime);
+    wanted === undefined ? current.status === 'published' : live && sameTime;
   if (alreadyThere) return;
 
   await posts.publish(

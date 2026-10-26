@@ -13,7 +13,10 @@ import {
   doneStamp,
   isCompleteReorder,
 } from './launch-checklist.service';
-import { CreateChecklistItemDto } from '../dto/launch-checklist.dto';
+import {
+  CreateChecklistItemDto,
+  UpdateChecklistItemDto,
+} from '../dto/launch-checklist.dto';
 
 const PO = 'po-user';
 const NOW = new Date('2026-10-26T12:00:00.000Z');
@@ -190,5 +193,41 @@ describe('CreateChecklistItemDto', () => {
     ).toContain('linkUrl');
     expect(await check({ section: 'content', title: '   ' })).toContain('title');
     expect(await check({ section: 'other', title: 'x' })).toContain('section');
+  });
+
+  it('section and title are required; null is a 400, never a database error', async () => {
+    const check = async (body: object) =>
+      (await validate(plainToInstance(CreateChecklistItemDto, body))).map(
+        (e) => e.property,
+      );
+    expect(await check({ section: 'content' })).toEqual(['title']);
+    expect(await check({ title: 'x' })).toEqual(['section']);
+    expect(await check({ section: 'content', title: null })).toEqual(['title']);
+    expect(await check({ section: 'content', title: 'x', notes: null })).toEqual([
+      'notes',
+    ]);
+    expect(await check({ section: 'content', title: 'x', linkUrl: null })).toEqual([]);
+  });
+});
+
+describe('UpdateChecklistItemDto', () => {
+  const check = async (body: object) =>
+    (await validate(plainToInstance(UpdateChecklistItemDto, body))).map(
+      (e) => e.property,
+    );
+
+  it('omitted fields are left alone', async () => {
+    expect(await check({ version: 1 })).toEqual([]);
+    expect(await check({ version: 1, title: 'New', done: true, linkUrl: null })).toEqual(
+      [],
+    );
+  });
+
+  it('null is refused on non-nullable fields (done: null must not clear the item)', async () => {
+    expect(await check({ version: 1, title: null })).toEqual(['title']);
+    expect(await check({ version: 1, section: null })).toEqual(['section']);
+    expect(await check({ version: 1, description: null })).toEqual(['description']);
+    expect(await check({ version: 1, notes: null })).toEqual(['notes']);
+    expect(await check({ version: 1, done: null })).toEqual(['done']);
   });
 });
