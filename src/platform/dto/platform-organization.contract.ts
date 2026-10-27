@@ -15,6 +15,7 @@ import type {
 } from '../../tenancy/repositories/organizations.repository';
 import type { OrganizationMembershipWithUser } from '../../tenancy/repositories/organization-memberships.repository';
 import type { OrganizationOwnerPhoneEntry } from '../../identity/phone/user-phone.service';
+import type { OrganizationAcquisitionResponse } from '../../growth/dto/growth.contract';
 
 export interface PlatformOrganizationAcademyRefResponse {
   readonly id: string;
@@ -59,6 +60,12 @@ export interface PlatformOrganizationDetailResponse extends PlatformOrganization
   readonly ownerPhone?: PlatformOrganizationOwnerPhoneResponse;
   /** B0-ANL-04 — sanitised signup attribution (UTM / referrer domain / template), or null. */
   readonly signupAttribution: Record<string, string> | null;
+  /**
+   * G1 — the resolved acquisition channel, how it was decided, the Platform
+   * Owner override, the self-reported answer and the stored attribution
+   * (additive; `null` only if the organization vanished mid-request).
+   */
+  readonly acquisition: OrganizationAcquisitionResponse | null;
   readonly subscription?: TenantSubscriptionResponse;
   readonly usage?: TenantUsageResponse;
   readonly academies: readonly PlatformOrganizationAcademyRefResponse[];
@@ -89,6 +96,7 @@ export function toPlatformOrganizationDetailResponse(
   academies: readonly Pick<Academy, 'id' | 'name' | 'status'>[],
   members: readonly OrganizationMembershipWithUser[],
   ownerPhone?: OrganizationOwnerPhoneEntry,
+  acquisition: OrganizationAcquisitionResponse | null = null,
 ): PlatformOrganizationDetailResponse {
   const attribution = organization.signupAttribution;
   return {
@@ -109,6 +117,7 @@ export function toPlatformOrganizationDetailResponse(
       attribution && typeof attribution === 'object' && !Array.isArray(attribution)
         ? (attribution as Record<string, string>)
         : null,
+    acquisition,
     subscription,
     usage,
     academies: academies.map((academy) => ({

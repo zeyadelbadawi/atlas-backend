@@ -39,6 +39,9 @@ export interface PlatformContactSubmissionResponse {
   readonly preferredChannel: string | null;
   /** B0-ANL-04 — sanitised UTM values / referrer domain / landing template, or null. */
   readonly attribution: Record<string, string> | null;
+  /** G1 — the visitor's own "how did you first hear about us?" answer, or null. */
+  readonly heardFrom: string | null;
+  readonly heardFromOther: string | null;
 }
 
 export interface PlatformContactConsentResponse {
@@ -95,6 +98,8 @@ export function toPlatformContactSubmissionResponse(
       !Array.isArray(row.attribution)
         ? (row.attribution as Record<string, string>)
         : null,
+    heardFrom: row.heardFrom ?? null,
+    heardFromOther: row.heardFromOther ?? null,
   };
 }
 

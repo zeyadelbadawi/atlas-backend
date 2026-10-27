@@ -36,6 +36,7 @@ import { createHash, createHmac } from 'node:crypto';
 import type { IdentityConfig, LeadCaptureConfig } from '../../config/configuration';
 import { requireNormalizedPhone } from '../../identity/phone/user-phone.service';
 import { sanitizeAttribution } from '../../common/attribution/attribution';
+import { sanitizeSelfReportedSource } from '../../common/attribution/acquisition-channel';
 import type { InsertPlatformContactSubmission } from '../repositories/platform-contact-submissions.repository';
 import { RedisService } from '../../redis/redis.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -189,6 +190,8 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
    *     (`PLATFORM_CONTACT_QUALIFIED_TOPICS`: sales, founding) only.
    *   - FLAG_ATTRIBUTION_CAPTURE_MODE on: the sanitised attribution object
    *     (no personal data, capped); an untagged visit stores nothing.
+   *   - G1, NOT flag-gated: the self-reported `heardFrom` (+ scrubbed
+   *     `heardFromOther` for `other`) whenever the visitor answered.
    */
   leadFields(
     payload: SubmitPlatformContactDto,
@@ -224,6 +227,13 @@ export class PlatformContactIntakeService implements BeforeApplicationShutdown {
     if (config.attributionCaptureMode === 'on') {
       const attribution = sanitizeAttribution(payload.attribution);
       if (attribution) fields.attribution = { ...attribution };
+    }
+    // G1 — a voluntary answer, not tracking: stored whenever given,
+    // whatever the flags say. The free text is scrubbed (dropped, never a 400).
+    const source = sanitizeSelfReportedSource(payload.heardFrom, payload.heardFromOther);
+    if (source) {
+      fields.heardFrom = source.heardFrom;
+      fields.heardFromOther = source.heardFromOther;
     }
     return fields;
   }

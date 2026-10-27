@@ -14,6 +14,9 @@
  * full entitlement-aware assembly verbatim rather than re-deriving it.
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { PlatformDomainRuntimeConfig } from '../../config/configuration';
+import { readOrganizationAcquisition } from '../../growth/organization-acquisition.reader';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { OrganizationsRepository } from '../../tenancy/repositories/organizations.repository';
 import { OrganizationMembershipsRepository } from '../../tenancy/repositories/organization-memberships.repository';
@@ -46,6 +49,7 @@ export class PlatformOrganizationsService {
     private readonly academiesRepository: AcademiesRepository,
     private readonly tenantSubscriptionService: TenantSubscriptionService,
     private readonly tenantSubscriptionsRepository: TenantSubscriptionsRepository,
+    private readonly configService: ConfigService,
   ) {}
 
   async listOrganizations(
@@ -108,23 +112,33 @@ export class PlatformOrganizationsService {
       throw new NotFoundException({ messageKey: 'errors.notFound' });
     }
 
-    const [subscription, usage, academies, members, ownerPhones] = await Promise.all([
-      this.tryGetSubscription(organizationId),
-      this.tryGetUsage(organizationId),
-      this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
-        this.academiesRepository.findRefsForOrganization(tx, organizationId),
-      ),
-      this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
-        this.organizationMembershipsRepository.findManyForOrganization(
-          tx,
-          organizationId,
+    const [subscription, usage, academies, members, ownerPhones, acquisition] =
+      await Promise.all([
+        this.tryGetSubscription(organizationId),
+        this.tryGetUsage(organizationId),
+        this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+          this.academiesRepository.findRefsForOrganization(tx, organizationId),
         ),
-      ),
-      // B0-IAM-08 — only an owner who opted in to WhatsApp contact.
-      this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
-        readOptedInOrganizationOwnerPhones(tx, [organizationId]),
-      ),
-    ]);
+        this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+          this.organizationMembershipsRepository.findManyForOrganization(
+            tx,
+            organizationId,
+          ),
+        ),
+        // B0-IAM-08 — only an owner who opted in to WhatsApp contact.
+        this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+          readOptedInOrganizationOwnerPhones(tx, [organizationId]),
+        ),
+        // G1 — acquisition channel (resolved), override, self-reported answer.
+        this.tenancyContextService.runInUserContext(platformOwnerId, (tx) =>
+          readOrganizationAcquisition(
+            tx,
+            organizationId,
+            this.configService.get<PlatformDomainRuntimeConfig>('platformDomain')
+              ?.baseDomain,
+          ),
+        ),
+      ]);
 
     return toPlatformOrganizationDetailResponse(
       organization,
@@ -133,6 +147,7 @@ export class PlatformOrganizationsService {
       academies,
       members,
       ownerPhones.get(organizationId),
+      acquisition,
     );
   }
 

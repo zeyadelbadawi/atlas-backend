@@ -13,6 +13,7 @@
  * run the organization signup, which is the safe direction.
  */
 import type { Prisma } from '@prisma/client';
+import type { SelfReportedSource } from '../../common/attribution/acquisition-channel';
 
 export const SIGNUP_ORGANIZATION_PORT = Symbol('SIGNUP_ORGANIZATION_PORT');
 
@@ -49,6 +50,8 @@ export interface SignupOrganizationPort {
       readonly context?: { readonly ipAddress?: string; readonly userAgent?: string };
       /** B0-ANL-04 — already sanitised and flag-checked by the caller; omitted = none. */
       readonly signupAttribution?: Prisma.InputJsonValue;
+      /** G1 — already sanitised by the caller; omitted = the owner did not answer. */
+      readonly selfReportedSource?: SelfReportedSource;
     },
   ): Promise<SignupOrganizationResult>;
 
