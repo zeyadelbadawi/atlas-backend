@@ -280,12 +280,19 @@ runs:
                 # Anything the backend's own validation would refuse (and
                 # so fail to start on) is written blank instead.
                 if k == 'APP_REVIEW_ACADEMY_ID':
-                    ok = re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', v)
+                    # Lowercase: the backend compares it with ids as the
+                    # database returns them.
+                    v = v.lower()
+                    ok = re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', v)
                     return v if ok else "''"
-                parts = [p.strip() for p in v.split(',') if p.strip()]
-                email = r'[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+'
-                ok = parts and all(re.fullmatch(email, p) for p in parts)
-                return ','.join(parts) if ok else "''"
+                # Every entry must be an address (an empty one, as in `a@b.c,,`,
+                # makes the backend refuse the list), and the backend's
+                # 2000-character limit applies to the joined list.
+                parts = [p.strip() for p in v.split(',')]
+                email = r'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+'
+                joined = ','.join(parts)
+                ok = all(re.fullmatch(email, p) for p in parts) and len(joined) <= 2000
+                return joined if ok else "''"
             if k in ('MOBILE_ANDROID_CERT_SHA256', 'MOBILE_IOS_APP_IDS'):
                 # Comma lists: written without spaces and only from safe
                 # characters, so `source .env` in deploy.sh reads one plain
