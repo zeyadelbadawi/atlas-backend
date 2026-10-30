@@ -101,6 +101,13 @@ account skips the academy's emailed sign-in code — narrowly:
   the review.
 - e2e: `test/app-review-access.e2e-spec.ts` (REVIEW-01..06).
 
+Deploy: GitHub **variables** `APP_REVIEW_EMAILS` and `APP_REVIEW_ACADEMY_ID`,
+passed by `deploy.yml`. A value the backend would refuse (not a UUID, not
+an email list) is written blank, so a typo cannot stop the backend from
+starting. After the review set **both** variables to `off` and redeploy:
+that writes them blank on the VPS (an empty variable writes nothing, so
+clearing the variable alone leaves the old value in `/opt/atlas/.env`).
+
 ## B1 — push notifications
 
 **Off by default.** Nothing is queued or sent unless `FLAG_PUSH_MODE=on`.

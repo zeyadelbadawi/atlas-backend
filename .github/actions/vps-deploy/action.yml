@@ -88,6 +88,17 @@ inputs:
     description: >-
       TEAMID.bundle.id for Universal Links
       (/.well-known/apple-app-site-association). Unset = file answers 404.
+  app_review_emails:
+    required: false
+    default: ''
+    description: >-
+      App Store / Google Play review accounts (comma-separated) that skip the
+      emailed sign-in code in the one demo academy. `off` clears it on the VPS.
+  app_review_academy_id:
+    required: false
+    default: ''
+    description: >-
+      The demo academy id for app_review_emails. `off` clears it on the VPS.
   brevo_api_key:
     required: false
     default: ''
@@ -214,6 +225,8 @@ runs:
         FCM_PRIVATE_KEY: ${{ inputs.fcm_private_key }}
         MOBILE_ANDROID_CERT_SHA256: ${{ inputs.mobile_android_cert_sha256 }}
         MOBILE_IOS_APP_IDS: ${{ inputs.mobile_ios_app_ids }}
+        APP_REVIEW_EMAILS: ${{ inputs.app_review_emails }}
+        APP_REVIEW_ACADEMY_ID: ${{ inputs.app_review_academy_id }}
       run: |
         set -euo pipefail
 
@@ -254,9 +267,25 @@ runs:
           'FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY',
           # App Links / Universal Links files (/.well-known); public values.
           'MOBILE_ANDROID_CERT_SHA256', 'MOBILE_IOS_APP_IDS',
+          # Store review access (B3). Set only for a review; `off` writes a
+          # blank value (= unset) because an empty variable writes nothing.
+          'APP_REVIEW_EMAILS', 'APP_REVIEW_ACADEMY_ID',
         ]
         def one_line(k):
             v = os.environ[k].strip()
+            if k in ('APP_REVIEW_EMAILS', 'APP_REVIEW_ACADEMY_ID'):
+                import re
+                if v.lower() == 'off':
+                    return "''"
+                # Anything the backend's own validation would refuse (and
+                # so fail to start on) is written blank instead.
+                if k == 'APP_REVIEW_ACADEMY_ID':
+                    ok = re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', v)
+                    return v if ok else "''"
+                parts = [p.strip() for p in v.split(',') if p.strip()]
+                email = r'[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+'
+                ok = parts and all(re.fullmatch(email, p) for p in parts)
+                return ','.join(parts) if ok else "''"
             if k in ('MOBILE_ANDROID_CERT_SHA256', 'MOBILE_IOS_APP_IDS'):
                 # Comma lists: written without spaces and only from safe
                 # characters, so `source .env` in deploy.sh reads one plain
