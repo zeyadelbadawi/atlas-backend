@@ -36,6 +36,33 @@ from the environment:
 Listed in the route inventory (`route-surface-inventory.spec.ts`); e2e in
 `test/mobile-config.e2e-spec.ts`.
 
+## App Links / Universal Links — `/.well-known/*`
+
+`GET /api/v1/public/mobile/assetlinks.json` and
+`GET /api/v1/public/mobile/apple-app-site-association`
+(`src/mobile/app-links.controller.ts`). Caddy serves them at
+`/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association`
+on the platform host and every academy subdomain, so an academy link
+(a course, `/my/*`, an emailed verify or reset link) opens the app when it
+is installed. Paying pages (`/my/purchases`, `/my/payments`,
+`/my/courses/*/checkout`) are excluded on iOS and sent to a browser tab by
+the app on Android: the app sells nothing.
+
+| Variable | Meaning | Unset |
+|---|---|---|
+| `MOBILE_ANDROID_CERT_SHA256` | Signing certificate SHA-256 fingerprint(s), `AA:BB:…`, comma-separated (Play App Signing key + upload key) | `assetlinks.json` answers 404 |
+| `MOBILE_ANDROID_PACKAGE` | Android application id | `com.atlas.atlas_mobile` |
+| `MOBILE_IOS_APP_IDS` | `TEAMID.bundle.id`, comma-separated | the AASA file answers 404 |
+
+Deploy: GitHub **variables** (public values) `MOBILE_ANDROID_CERT_SHA256` and
+`MOBILE_IOS_APP_IDS`, passed by `deploy.yml`. Both are known only once the
+store accounts exist (phase 9); until then links open in the browser as today.
+
+Like every optional value the deploy syncs, clearing the GitHub variable
+does **not** remove a value already written to `/opt/atlas/.env` (an empty
+value is never written over a live one). To stop serving a file, remove its
+line from `/opt/atlas/.env` on the VPS and redeploy.
+
 ## B4 — consent records (`user_consents`)
 
 Terms of Service, Privacy Policy and the 13+ age confirmation, with the

@@ -140,6 +140,8 @@ jobs:
           fcm_project_id: ${{ vars.FCM_PROJECT_ID }}
           fcm_client_email: ${{ vars.FCM_CLIENT_EMAIL }}
           fcm_private_key: ${{ secrets.FCM_PRIVATE_KEY }}
+          mobile_android_cert_sha256: ${{ vars.MOBILE_ANDROID_CERT_SHA256 }}
+          mobile_ios_app_ids: ${{ vars.MOBILE_IOS_APP_IDS }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);
@@ -249,6 +251,8 @@ jobs:
           fcm_project_id: ${{ vars.FCM_PROJECT_ID }}
           fcm_client_email: ${{ vars.FCM_CLIENT_EMAIL }}
           fcm_private_key: ${{ secrets.FCM_PRIVATE_KEY }}
+          mobile_android_cert_sha256: ${{ vars.MOBILE_ANDROID_CERT_SHA256 }}
+          mobile_ios_app_ids: ${{ vars.MOBILE_IOS_APP_IDS }}
           # P64 Communications. The provider CHAIN is a repository
           # VARIABLE (it is configuration, not a secret, and the ability
           # to read it is how an operator sees which providers are live);

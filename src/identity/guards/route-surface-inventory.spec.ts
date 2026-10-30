@@ -244,6 +244,10 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/health': 'public uptime check; status word only, no details',
   // Atlas mobile app — supported versions, store links, maintenance flag.
   'GET public/mobile/config': 'mobile app version gate; operator-set values only',
+  // App Links / Universal Links files, proxied by Caddy from /.well-known.
+  'GET public/mobile/assetlinks.json': 'Android App Links file; operator-set values only',
+  'GET public/mobile/apple-app-site-association':
+    'iOS Universal Links file; operator-set values only',
   // Sign in with Apple (B2) — the mobile app's native sign-in and its two
   // follow-up steps; metered like sign-in / sign-up; 404 while off.
   'POST auth/apple/native':

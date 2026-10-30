@@ -211,6 +211,32 @@ const EnvSchema = z.object({
   MOBILE_MAINTENANCE_MODE: blankAsUnset(
     z.union([z.literal('true'), z.literal('false')]).optional(),
   ),
+  // App Links / Universal Links (src/mobile/app-links.controller.ts). Unset
+  // = the .well-known files answer 404 and links open in the browser.
+  MOBILE_ANDROID_PACKAGE: blankAsUnset(
+    z
+      .string()
+      .regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/, 'must be an Android package name')
+      .optional(),
+  ),
+  MOBILE_ANDROID_CERT_SHA256: blankAsUnset(
+    z
+      .string()
+      .regex(
+        /^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}(\s*,\s*([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})*$/,
+        'must be SHA-256 fingerprints (AA:BB:…), comma-separated',
+      )
+      .optional(),
+  ),
+  MOBILE_IOS_APP_IDS: blankAsUnset(
+    z
+      .string()
+      .regex(
+        /^[A-Z0-9]{10}\.[A-Za-z0-9.-]+(\s*,\s*[A-Z0-9]{10}\.[A-Za-z0-9.-]+)*$/,
+        'must be TEAMID.bundle.id, comma-separated',
+      )
+      .optional(),
+  ),
   // App Store / Google Play review (B3, docs/mobile/MOBILE_APP_BACKEND.md):
   // learner accounts that may sign in to ONE demo academy without the
   // emailed code, because a reviewer cannot read that inbox. Both must be
