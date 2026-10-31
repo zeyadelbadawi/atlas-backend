@@ -270,6 +270,8 @@ writer stores.
 | `account.deletion.confirmed` | security | platform | no | challengeId |
 | `account.phone.updated` | security | platform | no | change, country, previousCountry, verificationCleared (never the number) |
 | `account.phone.removed` | security | platform | no | country, wasVerified (never the number) |
+| `account.avatar.updated` | security | platform | no | sizeBytes (never the image) |
+| `account.avatar.removed` | security | platform | no | — |
 | `account.deleted` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `account.deleted_by_platform_owner` | security | platform | no | initiatedBy, reason, hasFeedback, sessionsRevoked |
 | `plan.created` | platform | platform | no | key |

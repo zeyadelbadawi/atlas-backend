@@ -1140,6 +1140,10 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'country',
     'wasVerified',
   ]),
+  // Profile photo (mobile, `/users/me/avatar`) — the stored size only;
+  // the image itself is never written to an audit row.
+  ev('account.avatar.updated', 'security', 'user', 'platform', false, ['sizeBytes']),
+  ev('account.avatar.removed', 'security', 'user', 'platform', false, []),
   ev('account.deleted', 'security', 'user', 'platform', false, ACCOUNT_DELETED_CONTEXT),
   // B0-SEC-07 — Platform Owner suspension; the operator's reason is kept.
   ev('account.suspended', 'security', 'user', 'platform', false, [

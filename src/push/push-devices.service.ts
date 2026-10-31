@@ -11,6 +11,7 @@ export interface PushDeviceResponse {
   readonly platform: string;
   readonly locale: string;
   readonly appVersion: string;
+  readonly dueReminders: boolean;
   readonly createdAt: string;
 }
 
@@ -44,6 +45,7 @@ export class PushDevicesService {
           token: dto.token,
           appVersion: dto.appVersion,
           locale: dto.locale,
+          dueReminders: dto.dueReminders ?? false,
         },
         update: {
           academyId,
@@ -51,6 +53,7 @@ export class PushDevicesService {
           platform: dto.platform,
           appVersion: dto.appVersion,
           locale: dto.locale,
+          ...(dto.dueReminders === undefined ? {} : { dueReminders: dto.dueReminders }),
         },
       });
     });
@@ -71,6 +74,7 @@ function toResponse(row: {
   platform: string;
   locale: string;
   appVersion: string;
+  dueReminders: boolean;
   createdAt: Date;
 }): PushDeviceResponse {
   return {
@@ -78,6 +82,7 @@ function toResponse(row: {
     platform: row.platform,
     locale: row.locale,
     appVersion: row.appVersion,
+    dueReminders: row.dueReminders,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -190,6 +190,10 @@ import { AcademyArchiveModule } from '../academy/academy-archive.module';
   // an invitation/email system).
   exports: [
     AccountSetupService,
+    // `ProfilePhotoModule` (`/users/me/avatar`) saves the photo through the
+    // same profile path as `PATCH /users/me`. Exported for the reason the
+    // note below records: an unexported provider boots to a 502.
+    UsersService,
     // Exported for `PlatformUserManagementController`, which runs the
     // administrative deletion. Nest resolves DI at BOOTSTRAP, not at
     // compile time: a provider used across a module boundary without

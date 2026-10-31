@@ -49,3 +49,21 @@ export function pushTitle(academyName: string | null, locale: PushLocale): strin
   const name = academyName?.trim();
   return name ? name.slice(0, 120) : PLATFORM_TITLE[locale];
 }
+
+const DUE_BODY: Readonly<
+  Record<'quiz' | 'assignment', Readonly<Record<PushLocale, string>>>
+> = {
+  quiz: {
+    en: 'A quiz in one of your courses is due within a day.',
+    ar: 'اقترب موعد اختبار في إحدى دوراتك، خلال يوم.',
+  },
+  assignment: {
+    en: 'An assignment in one of your courses is due within a day.',
+    ar: 'اقترب موعد تسليم واجب في إحدى دوراتك، خلال يوم.',
+  },
+};
+
+/** The due-date reminder (mobile opt-in); like the rest, never names the item. */
+export function dueReminderBody(kind: 'quiz' | 'assignment', locale: PushLocale): string {
+  return DUE_BODY[kind][locale];
+}

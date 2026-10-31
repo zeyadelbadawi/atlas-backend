@@ -162,6 +162,22 @@ export class UsersService {
     }
   }
 
+  /** `DELETE /users/me/avatar` — the account shows its initials again. */
+  async clearAvatar(userId: string): Promise<CurrentUserResponse> {
+    await this.requireUser(userId);
+    const updated = await this.usersRepository.updateProfile(userId, { avatarUrl: null });
+    const organizationMemberships =
+      await this.userOrganizationsService.getMembershipsForUser(userId);
+    return toCurrentUser(
+      updated,
+      organizationMemberships,
+      await this.withNameReview(
+        updated,
+        this.withSurfaceState(await this.principalResolver.resolve(userId)),
+      ),
+    );
+  }
+
   async updateProfile(
     userId: string,
     input: { name?: string; avatar?: string },

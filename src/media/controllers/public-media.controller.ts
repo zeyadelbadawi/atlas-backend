@@ -70,6 +70,10 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import {
+  AVATAR_FILE_PATTERN,
+  AVATAR_PREFIX,
+} from '../../profile-photo/user-avatar.service';
 import { Inject } from '@nestjs/common';
 import {
   MEDIA_STORAGE_PROVIDER,
@@ -264,6 +268,34 @@ export class PublicMediaController {
    * name never change (`immutable`). One strict parameter (a UUID plus
    * `.webp`), so nothing outside `platform/blog/` can be addressed.
    */
+  /**
+   * Account profile photos (`POST /users/me/avatar`). Public by purpose: a
+   * photo the person chose to show, re-encoded as a 512 x 512 WebP under a
+   * random UUID name (a new one each time). Cached for an hour only, not a
+   * year: a removed photo must stop being served soon. One strict
+   * parameter, so nothing outside `users/avatars/` can be addressed.
+   */
+  @Get('users/avatars/:fileName')
+  async serveAvatar(
+    @Param('fileName') fileName: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!AVATAR_FILE_PATTERN.test(fileName)) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    let body: Buffer;
+    try {
+      body = await this.storage.getObject(`${AVATAR_PREFIX}/${fileName}`);
+    } catch {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    response.setHeader('Cache-Control', CACHE_CONTROL.public);
+    response.setHeader('Content-Type', 'image/webp');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Content-Length', body.byteLength);
+    response.status(200).end(body);
+  }
+
   @Get('platform/blog/:fileName')
   async servePlatformBlogImage(
     @Param('fileName') fileName: string,
