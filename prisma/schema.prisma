@@ -120,6 +120,8 @@ model User {
   phone                                         UserPhone?
   consents                                      UserConsent[]
   pushDevices                                   PushDevice[]
+  learnerNotes                                  LearnerNote[]
+  dueReminderSends                              DueReminderSend[]
   appleRefreshToken                             AppleRefreshToken?
   twoFactor                                     UserTwoFactor?
   twoFactorRecoveryCodes                        TwoFactorRecoveryCode[]
@@ -400,26 +402,71 @@ model UserConsent {
 /// active session and only for its own academy (plus account-wide notices).
 /// Own-row RLS; `release_push_token()` moves a token between accounts.
 model PushDevice {
-  id         String    @id @default(uuid())
-  userId     String    @map("user_id")
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  academyId  String    @map("academy_id")
-  academy    Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  academyId    String    @map("academy_id")
+  academy      Academy   @relation(fields: [academyId], references: [id], onDelete: Cascade)
   /// The registering session (`refresh_tokens.session_id`, stable across rotation).
-  sessionId  String    @map("session_id")
+  sessionId    String    @map("session_id")
   /// `ios` | `android` (CHECK in the migration).
-  platform   String    @db.VarChar(16)
+  platform     String    @db.VarChar(16)
   /// FCM registration token.
-  token      String    @unique(map: "push_devices_token_key") @db.VarChar(4096)
-  appVersion String    @map("app_version") @db.VarChar(32)
+  token        String    @unique(map: "push_devices_token_key") @db.VarChar(4096)
+  appVersion   String    @map("app_version") @db.VarChar(32)
   /// `en` | `ar` — the language pushes to this device are written in.
-  locale     String    @db.VarChar(8)
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-  lastSentAt DateTime? @map("last_sent_at")
+  locale       String    @db.VarChar(8)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastSentAt   DateTime? @map("last_sent_at")
+  /// The learner asked this device for a push the day before a quiz or
+  /// assignment is due (mobile setting; off until the app sends it).
+  dueReminders Boolean   @default(false) @map("due_reminders")
 
   @@index([userId, academyId], map: "push_devices_user_academy_idx")
   @@map("push_devices")
+}
+
+/// Atlas mobile app — a learner's own note and "saved" mark on a lesson,
+/// synced between their phones. Own-row FORCE RLS. Last write wins by the
+/// phone's edit time; an empty, unsaved row is kept as the deletion so an
+/// older copy on another phone cannot bring it back.
+model LearnerNote {
+  id        String       @id @default(uuid())
+  userId    String       @map("user_id")
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  academyId String       @map("academy_id")
+  academy   Academy      @relation(fields: [academyId], references: [id], onDelete: Cascade)
+  courseId  String       @map("course_id")
+  lessonId  String       @map("lesson_id")
+  lesson    CourseLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  note      String       @default("") @db.VarChar(4000)
+  saved     Boolean      @default(false)
+  /// When the learner made this edit, on their phone.
+  editedAt  DateTime     @map("edited_at")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  @@unique([userId, lessonId], map: "learner_notes_user_lesson_key")
+  @@index([userId, academyId], map: "learner_notes_user_academy_idx")
+  @@map("learner_notes")
+}
+
+/// Atlas mobile app — one row per due-date push sent: the sweep's claim,
+/// so a learner gets one reminder per item and due date. A new due date
+/// is a new reminder. Own-row FORCE RLS.
+model DueReminderSend {
+  id       String   @id @default(uuid())
+  userId   String   @map("user_id")
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `quiz` | `assignment` (CHECK in the migration).
+  itemType String   @map("item_type") @db.VarChar(16)
+  itemId   String   @map("item_id")
+  dueAt    DateTime @map("due_at")
+  sentAt   DateTime @default(now()) @map("sent_at")
+
+  @@unique([userId, itemType, itemId, dueAt], map: "due_reminder_sends_once_key")
+  @@map("due_reminder_sends")
 }
 
 /// Atlas mobile app (B2) — the Apple refresh token kept ONLY so the account's
@@ -831,6 +878,7 @@ model Academy {
   /// Notification context isolation — academy-context feed rows.
   notifications Notification[]
   pushDevices   PushDevice[]
+  learnerNotes  LearnerNote[]
 
   @@unique([nameKey])
   @@index([organizationId, status])
@@ -1848,6 +1896,7 @@ model CourseLesson {
   videoAsset      MediaAsset?          @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
 
   lessonProgress LessonProgress[]
+  learnerNotes   LearnerNote[]
   /// P64 Phase 2 — the protected body/file/external payload (AD-3).
   content        LessonContent?
   resources      LessonResource[]

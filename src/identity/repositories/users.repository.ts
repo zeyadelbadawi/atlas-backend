@@ -34,7 +34,8 @@ export interface CreateUserInput {
 
 export interface UpdateProfileInput {
   readonly name?: string;
-  readonly avatarUrl?: string;
+  /** `null` removes the photo (`DELETE /users/me/avatar`). */
+  readonly avatarUrl?: string | null;
 }
 
 @Injectable()

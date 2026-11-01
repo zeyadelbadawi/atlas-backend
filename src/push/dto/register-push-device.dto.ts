@@ -1,4 +1,12 @@
-import { IsIn, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 export const PUSH_PLATFORMS = ['ios', 'android'] as const;
 export const PUSH_LOCALES = ['en', 'ar'] as const;
@@ -20,4 +28,12 @@ export class RegisterPushDeviceDto {
 
   @IsIn(PUSH_LOCALES)
   readonly locale!: (typeof PUSH_LOCALES)[number];
+
+  /**
+   * A push the day before a quiz or assignment is due. Left out (older
+   * app versions) → a new device is off and an existing one keeps its value.
+   */
+  @ValidateIf((_, value) => value !== undefined) // null is refused, not skipped
+  @IsBoolean()
+  readonly dueReminders?: boolean;
 }

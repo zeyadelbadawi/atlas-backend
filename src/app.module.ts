@@ -68,6 +68,8 @@ import { PlatformModule } from './platform/platform.module';
 import { PlatformContactModule } from './platform-contact/platform-contact.module';
 import { FoundingModule } from './founding/founding.module';
 import { BlogModule } from './blog/blog.module';
+import { ProfilePhotoModule } from './profile-photo/profile-photo.module';
+import { LearnerSyncModule } from './learner-sync/learner-sync.module';
 import { SiteAnnouncementsModule } from './site-announcements/site-announcements.module';
 import { LaunchChecklistModule } from './launch-checklist/launch-checklist.module';
 import { GrowthModule } from './growth/growth.module';
@@ -224,6 +226,8 @@ import { EdgeCacheModule } from './edge-cache/edge-cache.module';
     FoundingModule,
     // B3 — launch tooling: marketing blog, site announcements, launch checklist.
     BlogModule,
+    ProfilePhotoModule,
+    LearnerSyncModule,
     SiteAnnouncementsModule,
     LaunchChecklistModule,
     // G1 — season capacity plan + CAC per channel (Platform Owner).

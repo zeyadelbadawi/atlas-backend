@@ -4,6 +4,9 @@
  * FCM when `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL` and `FCM_PRIVATE_KEY` are all
  * set; otherwise the stub (sends nothing). A missing or bad credential never
  * stops the API from booting. Sending is gated by `FLAG_PUSH_MODE=on`.
+ *
+ * Also the due-date reminder sweep (`due-reminders/`): a push the day before
+ * a quiz or assignment is due, to devices that turned it on.
  */
 import { Logger, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
@@ -20,6 +23,10 @@ import { PushDevicesService } from './push-devices.service';
 import { PushDeliveryService } from './push-delivery.service';
 import { PushProducer } from './push.producer';
 import { PushProcessor } from './push.processor';
+import { DUE_REMINDER_SWEEP_QUEUE } from './due-reminders/due-reminder.types';
+import { DueReminderSweepService } from './due-reminders/due-reminder-sweep.service';
+import { DueReminderSweepScheduler } from './due-reminders/due-reminder-sweep.scheduler';
+import { DueReminderSweepProcessor } from './due-reminders/due-reminder-sweep.processor';
 
 export function createPushProvider(config: ConfigService): PushProvider {
   const projectId = config.get<string>('FCM_PROJECT_ID');
@@ -41,6 +48,7 @@ export function createPushProvider(config: ConfigService): PushProvider {
     AuthCoreModule,
     TenancyModule,
     BullModule.registerQueue({ name: PUSH_QUEUE }),
+    BullModule.registerQueue({ name: DUE_REMINDER_SWEEP_QUEUE }),
   ],
   controllers: [PushDevicesController],
   providers: [
@@ -49,6 +57,10 @@ export function createPushProvider(config: ConfigService): PushProvider {
     PushDeliveryService,
     PushProducer,
     PushProcessor,
+    // Due-date pushes (mobile opt-in, push only — never an inbox row).
+    DueReminderSweepService,
+    DueReminderSweepScheduler,
+    DueReminderSweepProcessor,
   ],
   exports: [PushProducer],
 })

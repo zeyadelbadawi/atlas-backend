@@ -74,6 +74,9 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST users/me/consents',
   // Atlas mobile app (B1) — the account's own push devices (academy sessions only).
   'PUT users/me/push-devices',
+  // Atlas mobile app — the caller's own profile photo.
+  'POST users/me/avatar',
+  'DELETE users/me/avatar',
   'DELETE users/me/push-devices/:id',
   // Atlas mobile app (B8) — a learner with no staff or owner role deletes
   // their own account from an academy session (emailed code).
@@ -99,6 +102,10 @@ const SELF_OR_LEARNER = new Set<string>([
   'POST notifications/read-all',
   // --- the caller's own learning (host-, enrollment- and RLS-bound) -------
   'GET learning/overview',
+  // Atlas mobile app — the caller's own notes and study days (own-row RLS).
+  'GET learning/notes',
+  'PUT learning/notes/:lessonId',
+  'GET learning/streak',
   'GET learning/quizzes',
   'GET learning/assignments',
   'GET learning/devices',
@@ -264,6 +271,9 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/blog/sitemap': 'slugs and dates of published marketing blog posts',
   'GET public/media/platform/blog/:fileName':
     'Platform Owner blog/pop-up images (random UUID names, WebP only)',
+  // Atlas mobile app — learner profile photos (random UUID names, WebP only).
+  'GET public/media/users/avatars/:fileName':
+    'learner profile photos; random UUID names, WebP only, no listing',
   'GET public/site-announcements': 'live marketing banners and pop-up for a page',
   'POST public/site-announcements/:id/events':
     'view/click/dismiss beacon; live announcements only, counters only, rate-limited',

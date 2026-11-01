@@ -234,3 +234,55 @@ Communication). Register the sending domains before turning the flag on.
 
 e2e: `test/apple-sign-in.e2e-spec.ts` (APPLE-01..07); unit:
 `src/identity/apple/*.spec.ts`.
+
+## B9 — learner sync: profile photo, notes, study days, due-date pushes
+
+All additive; the web calls none of it and nothing it reads changes.
+Migration `20261201000100_mobile_learner_sync`.
+
+**Profile photo** (`src/profile-photo/`).
+
+- `POST /users/me/avatar` — multipart `file`, PNG/JPEG/WebP up to 5 MB,
+  decided from the bytes. Rotated by EXIF, metadata stripped, cropped to a
+  centred square, stored as a 512 × 512 WebP at
+  `users/avatars/<uuid>.webp`. Answers the current user with `avatar` set
+  to `/api/v1/public/media/users/avatars/<uuid>.webp` (site-relative; the
+  app prefixes the academy origin). A new name every upload; the previous
+  object is deleted. 20 uploads an hour.
+- `DELETE /users/me/avatar` — clears it; the initials show again.
+- `GET /public/media/users/avatars/:fileName` — UUID + `.webp` names only,
+  `Cache-Control: public`, `nosniff`.
+- Audit: `account.avatar.updated` (`sizeBytes`), `account.avatar.removed`.
+  The web already shows `avatar` wherever a learner appears.
+
+**Notes and saved lessons** (`src/learner-sync/`, `learner_notes`, own-row
+FORCE RLS — staff cannot read them).
+
+- `GET /learning/notes` — every note on the academy the session serves,
+  with course and lesson titles. An empty, unsaved row is a deletion.
+- `PUT /learning/notes/:lessonId` `{courseId, note (≤ 4000), saved,
+  editedAt}` — last write wins by `editedAt` (capped at the server clock).
+  Answers what the server holds and `applied: false` when it kept a newer
+  edit. Only lessons of a course the learner is enrolled in.
+
+**Study days** — `GET /learning/streak?tz=Africa/Cairo` → `{timeZone,
+days: ['2026-10-31', …]}`, newest first, up to 120. Derived from lesson
+completions, quiz submissions and assignment submissions; nothing is
+stored. The app joins them with the days it marked itself.
+
+**Due-date pushes** (`src/push/due-reminders/`).
+
+- `PUT /users/me/push-devices` takes an optional `dueReminders` boolean
+  (absent: a new device is off, an existing one keeps its value).
+- A BullMQ repeatable job every 15 minutes picks, through
+  `due_reminder_candidates()` (SECURITY DEFINER, platform-owner context
+  only, ids and due dates only), learners with the setting on who have a
+  published quiz or assignment due within 24 hours in a course they are
+  enrolled in. In the learner's own context it claims
+  `due_reminder_sends` (unique per user, item and due date), re-checks the
+  membership, that nothing was submitted and that the device's session is
+  alive, then pushes. A moved due date is a new reminder.
+- Push only: no notification or outbox row, so the web inbox is
+  untouched. The text names the kind of item, never the item.
+  `data`: `kind=due_reminder`, `academyId`, `path` (the web activity path,
+  which the app maps). Off unless `FLAG_PUSH_MODE=on`.
