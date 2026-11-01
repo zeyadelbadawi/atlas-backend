@@ -22,6 +22,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import sharp, { type Metadata } from 'sharp';
@@ -34,6 +35,7 @@ import { sniffBlogImageFormat } from '../blog/services/blog-images.service';
 import { TenancyContextService } from '../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../audit-log/services/audit-log-writer.service';
 import { UsersService } from '../identity/services/users.service';
+import { UsersRepository } from '../identity/repositories/users.repository';
 import type { CurrentUserResponse } from '../identity/dto/contracts';
 
 export const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
@@ -119,6 +121,7 @@ export class UserAvatarService {
     @Inject(MEDIA_STORAGE_PROVIDER)
     private readonly storage: MediaStorageProvider,
     private readonly usersService: UsersService,
+    private readonly usersRepository: UsersRepository,
     private readonly tenancyContextService: TenancyContextService,
     private readonly auditLogWriterService: AuditLogWriterService,
   ) {}
@@ -133,50 +136,83 @@ export class UserAvatarService {
     const image = await encodeAvatar(file.buffer);
     const key = `${AVATAR_PREFIX}/${randomUUID()}.webp`;
     await this.storage.putObject(key, image, 'image/webp');
-    const before = (await this.usersService.getCurrent(userId)).avatar;
-    const user = await this.usersService.updateProfile(userId, {
-      avatar: toMediaAssetUrl(key),
-    });
-    await this.audit(userId, 'account.avatar.updated', { sizeBytes: image.length });
-    await this.removeObject(before);
-    return user;
+    let displaced: string | null;
+    try {
+      displaced = await this.change(userId, toMediaAssetUrl(key), {
+        action: 'account.avatar.updated',
+        context: { sizeBytes: image.length },
+      });
+    } catch (error) {
+      // Nothing points at the new object: do not leave it behind.
+      await this.deleteQuietly(key);
+      throw error;
+    }
+    const replaced = avatarKeyOf(displaced);
+    if (replaced) await this.deleteQuietly(replaced);
+    return this.usersService.getCurrent(userId);
   }
 
+  /**
+   * Removes the photo. The object is deleted FIRST: if storage refuses,
+   * the request fails and the photo stays set, so a removal reported as
+   * done never leaves the photo reachable by its URL.
+   */
   async remove(userId: string): Promise<CurrentUserResponse> {
-    const before = (await this.usersService.getCurrent(userId)).avatar;
-    const user = await this.usersService.clearAvatar(userId);
-    if (before) await this.audit(userId, 'account.avatar.removed', {});
-    await this.removeObject(before);
-    return user;
+    const current = (await this.usersService.getCurrent(userId)).avatar;
+    const key = avatarKeyOf(current);
+    if (key) await this.storage.deleteObject(key);
+    if (current) {
+      const displaced = await this.change(userId, null, {
+        action: 'account.avatar.removed',
+        context: {},
+      });
+      // A photo set by another request in between: removed as well.
+      const other = avatarKeyOf(displaced);
+      if (other && other !== key) await this.deleteQuietly(other);
+    }
+    return this.usersService.getCurrent(userId);
   }
 
-  /** Best effort: a left-over object is unreachable once no row points at it. */
-  private async removeObject(url: string | null | undefined): Promise<void> {
-    const key = avatarKeyOf(url);
-    if (!key) return;
+  /**
+   * Sets `avatarUrl` and writes its audit row in ONE transaction, with the
+   * user row locked so concurrent changes for the same person run one at a
+   * time. Returns the URL it replaced (read under the lock).
+   */
+  private async change(
+    userId: string,
+    avatarUrl: string | null,
+    audit: {
+      action: 'account.avatar.updated' | 'account.avatar.removed';
+      context: Record<string, number>;
+    },
+  ): Promise<string | null> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const rows = await tx.$queryRaw<{ avatar_url: string | null }[]>`
+        SELECT avatar_url FROM users WHERE id = ${userId} FOR UPDATE`;
+      if (rows.length === 0) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      await this.usersRepository.updateProfile(userId, { avatarUrl }, tx);
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: userId,
+        action: audit.action,
+        targetType: 'user',
+        targetId: userId,
+        context: audit.context,
+      });
+      return rows[0].avatar_url;
+    });
+  }
+
+  /** For objects nothing points at any more: a failure is only logged. */
+  private async deleteQuietly(key: string): Promise<void> {
     try {
       await this.storage.deleteObject(key);
     } catch (error) {
       this.logger.warn(
         { key, error: error instanceof Error ? error.message : String(error) },
-        'Could not delete a replaced avatar object.',
+        'Could not delete an unreferenced avatar object.',
       );
     }
-  }
-
-  private async audit(
-    userId: string,
-    action: 'account.avatar.updated' | 'account.avatar.removed',
-    context: Record<string, number>,
-  ): Promise<void> {
-    await this.tenancyContextService.runInUserContext(userId, (tx) =>
-      this.auditLogWriterService.write(tx, {
-        actorUserId: userId,
-        action,
-        targetType: 'user',
-        targetId: userId,
-        context,
-      }),
-    );
   }
 }

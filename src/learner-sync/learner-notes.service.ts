@@ -3,6 +3,9 @@
  * mobile app). Own rows only (`learner_notes`, FORCE RLS), in the academy
  * the session serves.
  *
+ * Only on a course the learner is actively enrolled in (the learning
+ * access rule: enrolled or completed, not revoked, not expired).
+ *
  * LAST WRITE WINS by the phone's edit time, capped at the server's clock so
  * a phone set in the future cannot freeze a note. An empty, unsaved note is
  * kept as the deletion and listed, so every phone drops it.
@@ -10,6 +13,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { LearnerNote, Prisma } from '@prisma/client';
 import { TenancyContextService } from '../tenancy/services/tenancy-context.service';
+import { ACTIVE_ENROLLMENT_STATUSES } from '../learning/dto/learning.constants';
 import type {
   LearnerNoteResponse,
   PutLearnerNoteDto,
@@ -47,7 +51,14 @@ export class LearnerNotesService {
     return this.tenancy.runInUserContext(userId, async (tx) => {
       // Only on a lesson of a course the learner is enrolled in, here.
       const enrollment = await tx.enrollment.findFirst({
-        where: { studentId: userId, courseId: dto.courseId, academyId },
+        where: {
+          studentId: userId,
+          courseId: dto.courseId,
+          academyId,
+          status: { in: [...ACTIVE_ENROLLMENT_STATUSES] },
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
         select: { id: true },
       });
       const lesson = enrollment
@@ -65,6 +76,9 @@ export class LearnerNotesService {
       if (!lesson || !course)
         throw new NotFoundException({ messageKey: 'errors.notFound' });
 
+      // Two phones sending the same note at once: one at a time, so the
+      // older edit can never overwrite the newer one.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`learner_note:${userId}:${lessonId}`}, 0))`;
       const current = await tx.learnerNote.findUnique({
         where: { userId_lessonId: { userId, lessonId } },
       });

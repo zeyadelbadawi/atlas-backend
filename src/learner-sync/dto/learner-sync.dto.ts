@@ -34,6 +34,12 @@ export class StreakQueryDto {
   @MaxLength(64)
   @Matches(/^[A-Za-z0-9_+\-/]+$/)
   readonly tz?: string;
+
+  /** Only where the host resolves to no academy (see the controller). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  readonly academyId?: string;
 }
 
 export interface LearnerNoteResponse {

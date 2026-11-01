@@ -77,8 +77,10 @@ export class DueReminderSweepService {
           result.pushesSent += sent;
         }
       } catch (error) {
-        // One learner's failure never stops the others. The claim rolls
-        // back with its transaction, so the pair is retried next tick.
+        // One learner's failure never stops the others. A failure before
+        // the send rolls the claim back with its transaction; a send that
+        // failed only transiently releases it (below). Either way the pair
+        // is retried next tick.
         result.failures += 1;
         this.logger.warn(
           { kind: c.kind, itemId: c.item_id, detail: (error as Error).message },
@@ -172,6 +174,7 @@ export class DueReminderSweepService {
       path: `/my/courses/${c.course_id}/activities/${c.item_id}`,
     };
     let sent = 0;
+    let transient = 0;
     const dead: string[] = [];
     const delivered: string[] = [];
     for (const device of devices) {
@@ -188,11 +191,26 @@ export class DueReminderSweepService {
       } else if (result.reason === 'invalid_token') {
         dead.push(device.id);
       } else {
+        if (result.reason === 'transient') transient += 1;
         this.logger.warn(
           { deviceId: device.id, reason: result.reason, detail: result.detail },
           'Due reminder push not delivered',
         );
       }
+    }
+    if (sent === 0 && transient > 0) {
+      // Nothing reached the learner and a retry may: release the claim so
+      // the next tick tries again (while the item is still due soon).
+      await this.tenancy.runInUserContext(c.user_id, (tx) =>
+        tx.dueReminderSend.deleteMany({
+          where: {
+            userId: c.user_id,
+            itemType: c.kind,
+            itemId: c.item_id,
+            dueAt: c.due_at,
+          },
+        }),
+      );
     }
     if (dead.length > 0 || delivered.length > 0) {
       await this.tenancy.runInUserContext(c.user_id, async (tx) => {

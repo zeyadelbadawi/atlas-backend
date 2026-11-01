@@ -93,6 +93,9 @@ CREATE POLICY "due_reminder_sends_self_select" ON "due_reminder_sends"
   FOR SELECT USING ("user_id" = current_setting('app.current_user_id', true));
 CREATE POLICY "due_reminder_sends_self_insert" ON "due_reminder_sends"
   FOR INSERT WITH CHECK ("user_id" = current_setting('app.current_user_id', true));
+-- Released when every push for it failed transiently, so the next tick retries.
+CREATE POLICY "due_reminder_sends_self_delete" ON "due_reminder_sends"
+  FOR DELETE USING ("user_id" = current_setting('app.current_user_id', true));
 CREATE FUNCTION due_reminder_candidates(p_now TIMESTAMP(3), p_until TIMESTAMP(3), p_limit INTEGER)
 RETURNS TABLE (
   user_id TEXT,

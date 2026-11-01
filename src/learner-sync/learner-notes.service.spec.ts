@@ -10,6 +10,7 @@ function make(
 ) {
   const upserts: unknown[] = [];
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     enrollment: {
       findFirst: jest.fn().mockResolvedValue(enrolled ? { id: 'e1' } : null),
     },
@@ -28,7 +29,7 @@ function make(
   const tenancy = {
     runInUserContext: (_u: string, fn: (t: typeof tx) => unknown) => fn(tx),
   };
-  return { service: new LearnerNotesService(tenancy as never), upserts };
+  return { service: new LearnerNotesService(tenancy as never), upserts, tx };
 }
 
 const dto = (editedAt: string, note = 'new') => ({
@@ -57,6 +58,21 @@ describe('LearnerNotesService.put', () => {
     const { service } = make(null);
     const res = await service.put('u1', 'a1', 'l1', dto('2030-01-01T00:00:00Z'), NOW);
     expect(res.editedAt).toBe(NOW.toISOString());
+  });
+
+  it('asks only for an active enrollment, and locks the note', async () => {
+    const { service, tx } = make(null);
+    await service.put('u1', 'a1', 'l1', dto('2026-10-31T11:00:00Z'), NOW);
+    expect(tx.enrollment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['enrolled', 'completed'] },
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: NOW } }],
+        }),
+      }),
+    );
+    expect(tx.$executeRaw).toHaveBeenCalled();
   });
 
   it('refuses a lesson outside the learner’s enrolled course', async () => {

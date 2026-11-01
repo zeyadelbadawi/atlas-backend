@@ -17,12 +17,14 @@ function make(opts: {
   submitted?: boolean;
   liveSession?: boolean;
   token?: string;
+  transient?: boolean;
 }) {
   const sent: { token: string; body: string; data: Record<string, string> }[] = [];
   const provider = {
     send: jest.fn(
       async (m: { token: string; body: string; data: Record<string, string> }) => {
         sent.push(m);
+        if (opts.transient) return { ok: false, reason: 'transient', detail: '503' };
         return m.token.startsWith('invalid-')
           ? { ok: false, reason: 'invalid_token' }
           : { ok: true, providerMessageId: 'x' };
@@ -30,8 +32,10 @@ function make(opts: {
     ),
   };
   const deleted: unknown[] = [];
+  const released: unknown[] = [];
   const tx = {
     $queryRaw: jest.fn(),
+    dueReminderSend: { deleteMany: jest.fn((a: unknown) => released.push(a)) },
     academyStudent: {
       findUnique: jest.fn().mockResolvedValue({ status: 'active', blockedAt: null }),
     },
@@ -70,7 +74,7 @@ function make(opts: {
     delivery as never,
     provider as never,
   );
-  return { service, sent, deleted };
+  return { service, sent, deleted, released };
 }
 
 describe('DueReminderSweepService', () => {
@@ -109,6 +113,21 @@ describe('DueReminderSweepService', () => {
       expect(await service.run(NOW)).toMatchObject({ skipped: 1 });
       expect(sent).toHaveLength(0);
     }
+  });
+
+  it('releases the claim when every push failed transiently, so it is retried', async () => {
+    const { service, released } = make({ transient: true });
+    expect(await service.run(NOW)).toMatchObject({ pushesSent: 0 });
+    expect(released).toEqual([
+      {
+        where: {
+          userId: 'u1',
+          itemType: 'assignment',
+          itemId: 'i1',
+          dueAt: CANDIDATE.due_at,
+        },
+      },
+    ]);
   });
 
   it('drops a dead token', async () => {
