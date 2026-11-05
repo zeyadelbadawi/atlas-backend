@@ -593,6 +593,8 @@ const VIOLATION_TYPES: ReadonlySet<QuizAttemptEventType> = new Set<QuizAttemptEv
   'print',
   'second_session',
   'device_change',
+  'screenshot',
+  'screen_capture_start',
 ]);
 
 /**

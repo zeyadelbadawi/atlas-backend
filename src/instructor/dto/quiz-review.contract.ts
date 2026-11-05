@@ -247,6 +247,8 @@ export function integrityCsvRow(
     eventCounts.second_session ?? 0,
     eventCounts.device_change ?? 0,
     eventCounts.fullscreen_unavailable ?? 0,
+    eventCounts.screenshot ?? 0,
+    eventCounts.screen_capture_start ?? 0,
   ];
   return cells.map(csvCell).join(',');
 }
@@ -273,6 +275,8 @@ export const INTEGRITY_CSV_HEADER = [
   'second_session',
   'device_change',
   'fullscreen_unavailable',
+  'screenshot',
+  'screen_capture',
 ].join(',');
 
 /** Quotes every cell and neutralises spreadsheet formula injection (`=`, `+`, `-`, `@`). */

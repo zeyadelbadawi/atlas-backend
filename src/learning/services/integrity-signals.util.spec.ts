@@ -154,6 +154,25 @@ describe('deriveIntegritySignals', () => {
     ]);
   });
 
+  it('mobile app: a screenshot and a screen capture are worth a look, however short', () => {
+    const signals = derive([
+      ev(20, 'screenshot'),
+      ev(40, 'screen_capture_start'),
+      ev(41, 'screen_capture_stop'),
+      ev(90, 'screen_capture_start'),
+      ev(150, 'screen_capture_stop'),
+    ]);
+    expect(signals.map((s) => [s.key, s.level, s.occurrences, s.category])).toEqual([
+      ['screenshot', 'review', 1, 'behaviour'],
+      ['screen_captured', 'review', 1, 'behaviour'],
+    ]);
+    // Still being recorded when the attempt ended: kept, with its length.
+    const open = derive([ev(100, 'screen_capture_start')], { end: 160 });
+    expect(open).toEqual([
+      expect.objectContaining({ key: 'screen_captured', totalSeconds: 60 }),
+    ]);
+  });
+
   it('technical interruptions are categorised apart from behaviour', () => {
     const signals = derive(
       [

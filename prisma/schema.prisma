@@ -2756,6 +2756,13 @@ enum QuizAttemptEventType {
   second_session
   device_change
   warning_acknowledged
+  /// Mobile app: the learner took a screenshot (iOS reports it after the
+  /// fact; Android blocks it, so it is never reported there).
+  screenshot
+  /// Mobile app: the screen started / stopped being recorded, mirrored or
+  /// cast (iOS). The questions are hidden while it lasts.
+  screen_capture_start
+  screen_capture_stop
 
   @@map("quiz_attempt_event_type")
 }

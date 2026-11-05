@@ -54,6 +54,8 @@ export type IntegritySignalKey =
   | 'paste_after_copy'
   | 'copy'
   | 'print'
+  | 'screenshot'
+  | 'screen_captured'
   | 'connection_gap';
 
 /**
@@ -305,6 +307,25 @@ function deriveSignals(input: SignalInput): Omit<IntegritySignal, 'category'>[] 
       eventIds: prints.map((event) => event.id),
     });
   }
+
+  // Mobile app: a screenshot (iOS reports it once taken) and the screen
+  // being recorded, mirrored or cast (the app hides the questions meanwhile).
+  const screenshots = events.filter((event) => event.type === 'screenshot');
+  if (screenshots.length > 0) {
+    signals.push({
+      key: 'screenshot',
+      level: 'review',
+      occurrences: screenshots.length,
+      eventIds: screenshots.map((event) => event.id),
+    });
+  }
+  push(
+    durationSignal(
+      'screen_captured',
+      intervals(events, 'screen_capture_start', 'screen_capture_stop', input.endedAt),
+      () => true,
+    ),
+  );
 
   // Silence: no batch from the browser for a long stretch of an open
   // attempt (tab closed, device asleep, offline, or events blocked).

@@ -423,6 +423,17 @@ describe('quiz engine — integrity escalation', () => {
     expect(d.flagged).toBe(false);
   });
 
+  it('mobile: a screenshot and the start of a screen capture count; its end does not', () => {
+    const d = decide([
+      ev('screenshot'),
+      ev('screen_capture_start'),
+      ev('screen_capture_stop'),
+    ]);
+    expect(d.counted).toEqual([true, true, false]);
+    expect(d.violationCount).toBe(2);
+    expect(d.action).toBe('warn');
+  });
+
   it('ignores events during the warm-up', () => {
     const d = decide([ev('blur')], { now: new Date(started.getTime() + 1000) });
     expect(d.counted).toEqual([false]);

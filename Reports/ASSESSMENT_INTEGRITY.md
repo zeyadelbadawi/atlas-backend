@@ -85,6 +85,8 @@ highlight its evidence rows in the timeline.
 | `paste_after_copy` | paste after an in-attempt copy | never (context) | moving one's own text |
 | `copy` | copy/cut | never (context) | copying own answer |
 | `print` | print started | always | Ctrl+P by mistake |
+| `screenshot` | screenshot taken (mobile app, iOS; Android blocks it) | always | a screenshot of a notification or by mistake |
+| `screen_captured` | screen recorded, mirrored or cast (mobile app, iOS); the app hides the questions meanwhile | always (any length ≥ 2 s, or still on at the end) | AirPlay left on, a screen recording started before the quiz |
 | `connection_gap` | no batch for ≥ 180 s | never (context) | offline, sleep, closed tab |
 
 Intervals shorter than 2 s are not reported, with one exception: an
