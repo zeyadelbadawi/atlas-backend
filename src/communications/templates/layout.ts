@@ -21,6 +21,7 @@
  * concatenate raw values into markup.
  */
 import type { CommunicationLocale } from '../catalog/communication-catalog';
+import { companyLegalLine } from '../../common/company/company';
 
 export interface BrandingContext {
   readonly academyName?: string;
@@ -288,7 +289,8 @@ function renderFooterHtml(
       ? `<p style="margin:0 0 16px 0;font-size:13px;line-height:20px;text-align:start;">${footerLink(links.website, footer.website)}${sep}${footerLink(links.helpCenter, footer.helpCenter)}${sep}${footerLink(links.contact, footer.contact)}</p>`
       : '',
     why,
-    settings.replace('margin:0 0 8px 0', 'margin:0'),
+    settings,
+    `<p style="${SMALL}margin:0;">${escapeHtml(companyLegalLine(context.locale, context.branding.platformName))}</p>`,
   ].join('\n');
 }
 
@@ -372,7 +374,12 @@ export function renderTextLayout(
         `${footer.contact}: ${links.contact}`,
       );
     }
-    lines.push('', footer.why(brand), `${footer.settings}: ${context.settingsUrl}`);
+    lines.push(
+      '',
+      footer.why(brand),
+      `${footer.settings}: ${context.settingsUrl}`,
+      companyLegalLine(context.locale, context.branding.platformName),
+    );
   } else {
     lines.push(
       footer.why(brand),
