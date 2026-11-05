@@ -93,6 +93,45 @@ describe('email layout — B2 branding', () => {
     expect(text).not.toMatch(/Atlas/);
   });
 
+  it.each([
+    [
+      'en',
+      'Atlas is operated by CoreMind · Commercial register no. 000000 · Tax registration no. 000-000-000',
+    ],
+    [
+      'ar',
+      'أطلس منصة تديرها شركة كور مايند للتكنولوجيا · سجل تجاري رقم 000000 · رقم التسجيل الضريبي 000-000-000',
+    ],
+  ] as const)(
+    'B0-OC-17 — a platform email (receipts included) names the operating company (%s)',
+    (locale, line) => {
+      for (const key of [
+        'lifecycle.trial.ending_soon',
+        'lifecycle.subscription.activated',
+      ] as const) {
+        const { html, text } = TemplateRegistry.render(key, locale, PLATFORM, VALUES);
+        expect(html).toContain(line);
+        expect(text).toContain(line);
+      }
+    },
+  );
+
+  it.each(['en', 'ar'] as const)(
+    'an academy email never names the operating company (%s)',
+    (locale) => {
+      const { html, text } = TemplateRegistry.render(
+        'course.payment.approved',
+        locale,
+        ACADEMY,
+        VALUES,
+      );
+      for (const part of [html, text]) {
+        expect(part).not.toContain('CoreMind');
+        expect(part).not.toContain('كور مايند');
+      }
+    },
+  );
+
   it.each(['en', 'ar'] as const)(
     'an academy email keeps the academy identity, no Atlas logo or signature (%s)',
     (locale) => {
