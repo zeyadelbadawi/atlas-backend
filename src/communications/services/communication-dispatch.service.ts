@@ -1056,10 +1056,15 @@ export class CommunicationDispatchService {
 
         const first = included[0];
         const firstEntry = COMMUNICATION_CATALOG[first.key as CommunicationEventKey];
+        // W3 — the digest header and signature follow the entry's visual
+        // identity, like a single email: every digestible staff work item
+        // is read as coming FROM the academy, so it carries the academy's
+        // name and no platform signature (B0-OC-17 review).
         const branding = await this.brandingService.resolve(
           tx,
           firstEntry.branding,
           first.academyId,
+          firstEntry.identity ?? firstEntry.branding,
         );
         const locale = this.resolveLocale(
           recipient.preferences,
@@ -1073,7 +1078,12 @@ export class CommunicationDispatchService {
           const itemBranding =
             item.academyId === first.academyId
               ? branding
-              : await this.brandingService.resolve(tx, entry.branding, item.academyId);
+              : await this.brandingService.resolve(
+                  tx,
+                  entry.branding,
+                  item.academyId,
+                  entry.identity ?? entry.branding,
+                );
           const itemCampaign = item.campaignId
             ? await this.campaignContent(tx, item.campaignId)
             : null;
