@@ -173,7 +173,14 @@ export class CourseCompletionService {
           select: { status: true },
         }),
         tx.quiz.findMany({
-          where: { courseId: enrollment.courseId, status: 'published' },
+          // B7 (UX audit) V15 — the course is what the curriculum and the
+          // player show: an item detached from every unit can't be opened,
+          // so it doesn't count toward completion either.
+          where: {
+            courseId: enrollment.courseId,
+            status: 'published',
+            sectionId: { not: null },
+          },
           select: { id: true, title: true, requiredForCompletion: true },
         }),
         tx.quizResult.findMany({
@@ -183,7 +190,14 @@ export class CourseCompletionService {
           },
         }),
         tx.assignment.findMany({
-          where: { courseId: enrollment.courseId, status: 'published' },
+          // B7 (UX audit) V15 — the course is what the curriculum and the
+          // player show: an item detached from every unit can't be opened,
+          // so it doesn't count toward completion either.
+          where: {
+            courseId: enrollment.courseId,
+            status: 'published',
+            sectionId: { not: null },
+          },
           select: { id: true, title: true, requiredForCompletion: true },
         }),
         tx.assignmentSubmission.findMany({

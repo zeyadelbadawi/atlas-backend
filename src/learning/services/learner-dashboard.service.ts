@@ -205,7 +205,11 @@ export class LearnerDashboardService {
 
       if (type === 'quiz') {
         const quizzes = await tx.quiz.findMany({
-          where: { courseId: { in: courseIds }, status: 'published' },
+          where: {
+            courseId: { in: courseIds },
+            status: 'published',
+            sectionId: { not: null },
+          },
           select: {
             id: true,
             title: true,
@@ -255,7 +259,11 @@ export class LearnerDashboardService {
       }
 
       const assignments = await tx.assignment.findMany({
-        where: { courseId: { in: courseIds }, status: 'published' },
+        where: {
+          courseId: { in: courseIds },
+          status: 'published',
+          sectionId: { not: null },
+        },
         select: {
           id: true,
           title: true,
@@ -337,7 +345,11 @@ export class LearnerDashboardService {
 
     const [quizzes, quizResults, assignments, submissions] = await Promise.all([
       tx.quiz.findMany({
-        where: { courseId: { in: courseIds }, status: 'published' },
+        where: {
+          courseId: { in: courseIds },
+          status: 'published',
+          sectionId: { not: null },
+        },
         select: { id: true, courseId: true },
       }),
       tx.quizResult.findMany({
@@ -345,7 +357,11 @@ export class LearnerDashboardService {
         select: { quizId: true, passed: true, pendingGrading: true },
       }),
       tx.assignment.findMany({
-        where: { courseId: { in: courseIds }, status: 'published' },
+        where: {
+          courseId: { in: courseIds },
+          status: 'published',
+          sectionId: { not: null },
+        },
         select: { id: true, courseId: true },
       }),
       tx.assignmentSubmission.findMany({
@@ -425,6 +441,9 @@ export class LearnerDashboardService {
       where: {
         courseId: { in: [...courseIds] },
         status: 'published',
+        // Only what the learner can open: an item outside every unit is not
+        // part of the course sequence (B7 UX audit, V15).
+        sectionId: { not: null },
         dueAt: { not: null, lte: horizon },
       },
       select: {

@@ -427,9 +427,12 @@ export class CoursesRepository {
     if (courseIds.length === 0) {
       return { quizCounts: new Map(), assignmentCounts: new Map() };
     }
+    // Only items placed in a unit: one outside every unit is not part of
+    // the course a learner can open (B7 UX audit, V15).
     const where = {
       courseId: { in: courseIds as string[] },
       status: 'published' as const,
+      sectionId: { not: null },
     };
     const [quizGroups, assignmentGroups] = await Promise.all([
       tx.quiz.groupBy({ by: ['courseId'], where, _count: { _all: true } }),
