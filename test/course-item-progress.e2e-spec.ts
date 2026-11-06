@@ -310,6 +310,35 @@ describe('Course item progress (e2e)', () => {
     expect(enrollment.progress!.completionState).toBe('completed');
   });
 
+  it('B7 V15 — detaching an unfinished required quiz completes the course on the next completion read', async () => {
+    const { course, quizzes, student } = await seedCourseWith('items-detach-later', 1, 1);
+    await admin.quiz.update({
+      where: { id: quizzes[0].id },
+      data: { requiredForCompletion: true },
+    });
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: course.id },
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    const before = await get(
+      student.token,
+      `/learning/courses/${course.id}/completion`,
+    ).expect(200);
+    expect(before.body.completed).toBe(false);
+
+    // The author detaches the quiz the learner never took.
+    await admin.quiz.update({ where: { id: quizzes[0].id }, data: { sectionId: null } });
+
+    const after = await get(
+      student.token,
+      `/learning/courses/${course.id}/completion`,
+    ).expect(200);
+    expect(after.body.completed).toBe(true);
+    expect(after.body.completionState).toBe('completed');
+  });
+
   it('a lesson published after enrollment updates the item counts, not just the lesson counts', async () => {
     const { course, quizzes, student } = await seedCourseWith('items-added', 1, 1);
     const firstLesson = await admin.courseLesson.findFirstOrThrow({

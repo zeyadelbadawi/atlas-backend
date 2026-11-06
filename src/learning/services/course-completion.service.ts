@@ -486,6 +486,11 @@ export class CourseCompletionService {
         select: { title: true },
       });
       if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
+      // Self-heal the stored verdict first, as reading progress does: an
+      // authoring change (an item detached from its unit, a requirement
+      // lifted) can make the learner complete without any write of theirs,
+      // and `completed` / `completionState` below come from the stored row.
+      await this.recompute(tx, enrollment);
       const evaluated = await this.evaluate(tx, enrollment);
       const certificate = await tx.certificate.findUnique({
         where: { enrollmentId: enrollment.id },
