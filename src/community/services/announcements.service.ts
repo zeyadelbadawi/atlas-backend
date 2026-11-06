@@ -15,6 +15,7 @@
  * of a confusing empty/failed write.
  */
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -60,6 +61,26 @@ async function assertCanManageAcademy(
 }
 
 /**
+ * B4 (UX audit) — a date in the past would make the sweep publish the
+ * announcement at once, to everyone, without the publish confirmation
+ * the dashboard shows. A minute of grace covers "now" picked in a form.
+ */
+const SCHEDULE_GRACE_MS = 60_000;
+
+export function assertScheduleNotInPast(
+  scheduledAt: string | null | undefined,
+  now: number = Date.now(),
+): void {
+  if (!scheduledAt) return;
+  const at = new Date(scheduledAt).getTime();
+  if (Number.isNaN(at) || at >= now - SCHEDULE_GRACE_MS) return;
+  throw new BadRequestException({
+    messageKey: 'errors.announcement.scheduleInPast',
+    violations: [{ field: 'scheduledAt', messageKey: 'validation:scheduleInPast' }],
+  });
+}
+
+/**
  * The schedule part of an announcement update, by the same rule as create
  * (a date → `scheduled`, none → `draft`). `scheduledAt` absent leaves the
  * schedule as it is; a date on a draft or scheduled announcement makes it
@@ -69,7 +90,7 @@ async function assertCanManageAcademy(
  * announcement never changes status here — only its stored date, as before.
  */
 function scheduleUpdate(
-  existing: { readonly status: AnnouncementStatus },
+  existing: { readonly status: AnnouncementStatus; readonly scheduledAt?: Date | null },
   scheduledAt: string | null | undefined,
 ): Pick<Prisma.AnnouncementUpdateInput, 'scheduledAt' | 'status'> {
   if (scheduledAt === undefined) return {};
@@ -77,6 +98,11 @@ function scheduleUpdate(
   if (scheduledAt === null) {
     return unpublished ? { scheduledAt: null, status: 'draft' } : {};
   }
+  // Only a NEW date is checked: re-sending the stored one is not a change.
+  const unchanged =
+    existing.scheduledAt != null &&
+    existing.scheduledAt.getTime() === new Date(scheduledAt).getTime();
+  if (unpublished && !unchanged) assertScheduleNotInPast(scheduledAt);
   return unpublished
     ? { scheduledAt: new Date(scheduledAt), status: 'scheduled' }
     : { scheduledAt: new Date(scheduledAt) };
@@ -98,7 +124,7 @@ export class AnnouncementsService {
    */
   private async writeUpdate(
     tx: Prisma.TransactionClient,
-    existing: { readonly status: AnnouncementStatus },
+    existing: { readonly status: AnnouncementStatus; readonly scheduledAt?: Date | null },
     announcementId: string,
     fields: { readonly title?: string; readonly body?: string },
     scheduledAt: string | null | undefined,
@@ -271,6 +297,7 @@ export class AnnouncementsService {
   ): Promise<AnnouncementResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const { academyId } = await this.assertCanManage(tx, userId, courseId);
+      assertScheduleNotInPast(payload.scheduledAt);
       const created = await this.announcementsRepository.create(tx, {
         audience: 'course',
         academy: { connect: { id: academyId } },
@@ -395,6 +422,7 @@ export class AnnouncementsService {
   ): Promise<AnnouncementResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
       await assertCanManageAcademy(tx, userId, academyId);
+      assertScheduleNotInPast(payload.scheduledAt);
       const created = await this.announcementsRepository.create(tx, {
         audience: 'academy',
         academy: { connect: { id: academyId } },
@@ -513,6 +541,7 @@ export class AnnouncementsService {
     payload: CreateAnnouncementDto,
   ): Promise<AnnouncementResponse> {
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      assertScheduleNotInPast(payload.scheduledAt);
       const created = await this.announcementsRepository.create(tx, {
         audience: 'platform',
         author: { connect: { id: userId } },
