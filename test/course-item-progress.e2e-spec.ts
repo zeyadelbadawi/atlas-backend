@@ -128,11 +128,14 @@ describe('Course item progress (e2e)', () => {
       pricingType: 'free',
     });
     // Every item sits in a unit: an item outside every unit is not part of
-    // the course a learner can open, and doesn't count (B7 V15).
+    // the course a learner can open, and doesn't count (B7 V15). Quizzes get
+    // their own unit FIRST, so the sequential lock never holds them behind
+    // the lessons (these tests pass quizzes in any order); an optional quiz
+    // doesn't lock the lessons after it.
+    const quizSection =
+      quizzes > 0 ? await seedCourseSection(admin, course.id, 'Quizzes', 0) : null;
     const section =
-      lessons > 0 || quizzes > 0
-        ? await seedCourseSection(admin, course.id, 'Section', 0)
-        : null;
+      lessons > 0 ? await seedCourseSection(admin, course.id, 'Section', 1) : null;
     if (lessons > 0 && section) {
       for (let i = 0; i < lessons; i += 1) {
         await seedCourseLesson(admin, section.id, course.id, `Lesson ${i + 1}`, i, {
@@ -146,7 +149,7 @@ describe('Course item progress (e2e)', () => {
       const quiz = await seedQuiz(admin, course.id, `${label} quiz ${i + 1}`, {
         status: 'published',
         passingScore: 50,
-        sectionId: section?.id,
+        sectionId: quizSection?.id,
       });
       const question = await seedQuizQuestion(admin, quiz.id, '2+2?', 'single_choice', 0);
       const correct = await seedQuizQuestionOption(admin, question.id, '4', true);
