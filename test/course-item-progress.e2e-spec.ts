@@ -13,14 +13,20 @@
  *   - a mixed course keeps optional quizzes optional (lessons still decide),
  *     while its counts include the quiz;
  *   - the public course details read reports the quiz count, not just "0
- *     lessons".
+ *     lessons";
+ *   - an authoring change that completes the course (a required quiz
+ *     detached) reaches the learner's STORED verdict through the
+ *     course-completion fan-out job, with no request of the learner's.
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { createTestApp, uniqueTestEmail } from './utils/test-app';
 import {
   createAdminPrisma,
   seedAcademy,
+  seedAcademyMember,
   seedAcademyStudent,
   seedActiveSubscriptionForOrg,
   seedCourse,
@@ -32,6 +38,10 @@ import {
   seedQuizQuestionOption,
 } from './utils/db-admin';
 import type { PrismaClient } from '@prisma/client';
+import {
+  COURSE_COMPLETION_RECOMPUTE_QUEUE,
+  courseCompletionRecomputeJobId,
+} from '../src/learning/queue/course-completion-recompute.types';
 
 describe('Course item progress (e2e)', () => {
   let app: INestApplication;
@@ -159,7 +169,7 @@ describe('Course item progress (e2e)', () => {
     const student = await signUpAndSignIn(`${label}-student`);
     await seedAcademyStudent(admin, academy.id, student.userId);
     await post(student.token, '/enrollments', { courseId: course.id }).expect(201);
-    return { academy, host, course, quizzes: quizList, student };
+    return { academy, host, course, quizzes: quizList, student, owner };
   }
 
   async function pass(
@@ -340,6 +350,64 @@ describe('Course item progress (e2e)', () => {
     ).expect(200);
     expect(after.body.completed).toBe(true);
     expect(after.body.completionState).toBe('completed');
+  });
+
+  it('detaching an unfinished required quiz through the authoring API completes the stored verdict in the background, with no learner request', async () => {
+    const { academy, course, quizzes, student, owner } = await seedCourseWith(
+      'items-fanout',
+      1,
+      1,
+    );
+    // The owner authors through the real management endpoint.
+    await seedAcademyMember(admin, academy.id, owner.userId, 'owner');
+    // Required for COMPLETION only (never `requiredToProgress`): the quiz
+    // sits in the first unit and locks nothing.
+    await admin.quiz.update({
+      where: { id: quizzes[0].id },
+      data: { requiredForCompletion: true },
+    });
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: course.id },
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    const enrollment = await admin.enrollment.findUniqueOrThrow({
+      where: { studentId_courseId: { studentId: student.userId, courseId: course.id } },
+    });
+    const stored = () =>
+      admin.courseProgress.findUniqueOrThrow({ where: { enrollmentId: enrollment.id } });
+    expect((await stored()).completionState).toBe('in_progress');
+
+    // The author detaches the quiz the learner never took.
+    await request(app.getHttpServer())
+      .patch(`/courses/${course.id}/quizzes/${quizzes[0].id}`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ sectionId: null })
+      .expect(200);
+
+    // One job for the course, queued after the edit committed. Release its
+    // short coalescing delay now instead of waiting for it.
+    const queue = app.get<Queue>(getQueueToken(COURSE_COMPLETION_RECOMPUTE_QUEUE));
+    const job = await queue.getJob(courseCompletionRecomputeJobId(course.id));
+    expect(job).toBeDefined();
+    expect(job!.data).toEqual({ courseId: course.id, academyId: academy.id });
+    // Already released (or running) is fine: the poll below is the proof.
+    await job!.promote().catch(() => undefined);
+
+    // From here on the learner sends nothing: only the worker can move it.
+    const deadline = Date.now() + 15_000;
+    let progress = await stored();
+    while (progress.completionState !== 'completed' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      progress = await stored();
+    }
+    expect(progress.completionState).toBe('completed');
+    expect(progress.completedAt).not.toBeNull();
+    const after = await admin.enrollment.findUniqueOrThrow({
+      where: { id: enrollment.id },
+    });
+    expect(after.status).toBe('completed');
   });
 
   it('a lesson published after enrollment updates the item counts, not just the lesson counts', async () => {
