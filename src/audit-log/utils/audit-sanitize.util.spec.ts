@@ -17,6 +17,18 @@ describe('audit email scrub', () => {
     expect(containsEmail('price 100@ 5')).toBe(false);
   });
 
+  it('strips adjacent addresses joined by a plus sign, both of them', () => {
+    expect(stripEmails('owners a@b.co+c@d.ee here')).toBe('owners here');
+    expect(stripEmails('a@b.co+c@d.ee+f@g.hh')).toBeUndefined();
+  });
+
+  it('stays linear on a long string full of @ signs', () => {
+    const value = ('x'.repeat(60) + '@').repeat(20_000);
+    const started = Date.now();
+    expect(containsEmail(value)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
   it('finds an address that sits right after other text', () => {
     expect(containsEmail('owner:sara@example.com')).toBe(true);
     expect(containsEmail('(sara@example.com)')).toBe(true);

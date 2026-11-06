@@ -37,12 +37,13 @@ const IP_KEY = /(^ip$|ipaddress|ip_address|remoteaddr|clientip)/i;
 // Deliberately broad: anything with an @ between word-ish runs and a dotted
 // domain. A false positive costs a masked label; a false negative leaks PII.
 //
-// The lookbehind makes a match start only where a run of local-part
-// characters starts. Without it the engine retried from EVERY position
-// inside a long run with no `@` — quadratic: an 80 KB base64 string took
-// ~3 s, and a 4 MB course thumbnail saved as a data URL held the event loop
-// at 100 % for minutes, so the API stopped answering everyone (UX audit B3).
-const EMAIL_PATTERN = /(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+// Bounded runs (RFC 5321: local part ≤ 64, domain ≤ 255, label ≤ 63). The
+// unbounded `[…]+@` retried from EVERY position of a long run with no `@` —
+// quadratic: an 80 KB base64 string took ~3 s, and a 4 MB course thumbnail
+// saved as a data URL held the event loop at 100 % for minutes, so the API
+// stopped answering everyone (UX audit B3). Bounded, each start costs at
+// most 64 steps, and adjacent addresses ("a@b.co+c@d.ee") still both match.
+const EMAIL_PATTERN = /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,63}/gi;
 
 /** Context strings are short diagnostics, never documents. */
 const MAX_CONTEXT_STRING_LENGTH = 300;
@@ -54,6 +55,8 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 export function containsEmail(value: string): boolean {
+  // No "@", no address — and no scan of a long data URL at all.
+  if (!value.includes('@')) return false;
   EMAIL_PATTERN.lastIndex = 0;
   const found = EMAIL_PATTERN.test(value);
   EMAIL_PATTERN.lastIndex = 0;
@@ -62,6 +65,10 @@ export function containsEmail(value: string): boolean {
 
 /** Removes every email address from a string; `undefined` when nothing meaningful is left. */
 export function stripEmails(value: string): string | undefined {
+  if (!value.includes('@')) {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
   const stripped = value
     .replace(EMAIL_PATTERN, '')
     .replace(/\s{2,}/g, ' ')
