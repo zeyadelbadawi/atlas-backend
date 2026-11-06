@@ -600,8 +600,17 @@ describe('Website Builder & Theme Engine (e2e)', () => {
     );
     expect(refused.status).toBe(400);
     expect(refused.body.error.violations).toEqual([
-      { field: '0.config.title.en', messageKey: 'validation:maxLength' },
-      { field: '0.config.title.ar', messageKey: 'validation:maxLength' },
+      // With the limit, so the message can say it (UX audit B2).
+      {
+        field: '0.config.title.en',
+        messageKey: 'validation:maxLength',
+        values: { count: MAX_HERO_TITLE_LENGTH },
+      },
+      {
+        field: '0.config.title.ar',
+        messageKey: 'validation:maxLength',
+        values: { count: MAX_HERO_TITLE_LENGTH },
+      },
     ]);
 
     const atLimit = 'a'.repeat(MAX_HERO_TITLE_LENGTH);
@@ -680,7 +689,11 @@ describe('Website Builder & Theme Engine (e2e)', () => {
       })
       .expect(400);
     expect(refused.body.error.violations).toEqual([
-      { field: '1.config.description.en', messageKey: 'validation:maxLength' },
+      {
+        field: '1.config.description.en',
+        messageKey: 'validation:maxLength',
+        values: { count: expect.any(Number) },
+      },
     ]);
   });
 
