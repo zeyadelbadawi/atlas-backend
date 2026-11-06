@@ -3,9 +3,11 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { IsIntInRange, withViolation } from './violation-message';
 import { Type } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
@@ -87,6 +89,82 @@ describe('classValidatorErrorsToViolations', () => {
     const fields = violations.map((v) => v.field).sort();
 
     expect(fields).toEqual(['address.country', 'email', 'name']);
+  });
+});
+
+/** B8 (UX audit) — constraints that name their own violation through `context`. */
+class NamedDto {
+  @IsOptional()
+  @Matches(/^[A-Z]{2}\d{2}/, withViolation('validation:invalidIban'))
+  readonly iban?: string;
+
+  @IsOptional()
+  @IsIntInRange(1, 365)
+  readonly days?: number;
+
+  @IsOptional()
+  @IsIntInRange(0, 10000, 'errors.commission.percentageRange', { min: 0, max: 100 })
+  readonly basisPoints?: number;
+
+  @IsOptional()
+  @MinLength(10, withViolation('errors.reasonTooShort', { count: 10 }))
+  readonly reason?: string;
+}
+
+describe('classValidatorErrorsToViolations — named violations (context)', () => {
+  const violationsFor = (plain: Record<string, unknown>) =>
+    classValidatorErrorsToViolations(validateSync(plainToInstance(NamedDto, plain)));
+
+  it('forwards the format key a constraint names instead of the generic pattern key', () => {
+    expect(violationsFor({ iban: 'nope' })).toEqual([
+      { field: 'iban', messageKey: 'validation:invalidIban' },
+    ]);
+  });
+
+  it.each([-3, 0, 2.5, 366, 1000, 'abc', null])(
+    'reports ONE range violation with both ends for %p',
+    (days) => {
+      expect(violationsFor({ days })).toEqual(
+        days === null
+          ? []
+          : [
+              {
+                field: 'days',
+                messageKey: 'validation:integerRange',
+                values: { min: 1, max: 365 },
+              },
+            ],
+      );
+    },
+  );
+
+  it('accepts both ends of the range', () => {
+    expect(violationsFor({ days: 1 })).toEqual([]);
+    expect(violationsFor({ days: 365 })).toEqual([]);
+  });
+
+  it('carries the values the constraint names, not its own thresholds', () => {
+    expect(violationsFor({ basisPoints: -500 })).toEqual([
+      {
+        field: 'basisPoints',
+        messageKey: 'errors.commission.percentageRange',
+        values: { min: 0, max: 100 },
+      },
+    ]);
+    expect(violationsFor({ reason: 'short' })).toEqual([
+      { field: 'reason', messageKey: 'errors.reasonTooShort', values: { count: 10 } },
+    ]);
+  });
+
+  it('leaves constraints without a named violation exactly as before', () => {
+    const errors = validate({
+      email: 'owner@example.com',
+      name: 'a',
+      address: { country: 'EG' },
+    });
+    expect(classValidatorErrorsToViolations(errors)).toEqual([
+      { field: 'name', messageKey: 'validation:minLength', values: { count: 2 } },
+    ]);
   });
 });
 

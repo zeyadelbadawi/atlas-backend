@@ -1,4 +1,9 @@
 /**
+ * B8 (UX audit) V15 — every format check names its own key
+ * (`withViolation`), so a wrong IBAN, SWIFT, account, wallet or InstaPay
+ * value comes back as the message that shows the expected format
+ * (`validation:invalidIban`, …), not the generic "unexpected format".
+ *
  * Platform Owner configuration of the manual bank-transfer methods
  * (`/platform-payment-methods`, 2 Oct 2026).
  *
@@ -31,6 +36,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { withViolation } from '../../common/validation/violation-message';
 
 export class BankTransferInstructionsDto {
   @IsNotEmpty()
@@ -52,23 +58,25 @@ export class BankTransferInstructionsDto {
   @IsNotEmpty()
   @IsString()
   @MaxLength(64)
-  @Matches(/^[A-Za-z0-9 -]+$/, { message: 'validation:invalidAccountNumber' })
+  @Matches(/^[A-Za-z0-9 -]+$/, withViolation('validation:invalidAccountNumber'))
   readonly accountNumber!: string;
 
   /** ISO 13616: two letters, two check digits, up to 30 alphanumerics (spaces allowed for readability). */
   @IsOptional()
   @IsString()
-  @Matches(/^[A-Za-z]{2}[0-9]{2}[A-Za-z0-9 ]{10,32}$/, {
-    message: 'validation:invalidIban',
-  })
+  @Matches(
+    /^[A-Za-z]{2}[0-9]{2}[A-Za-z0-9 ]{10,32}$/,
+    withViolation('validation:invalidIban'),
+  )
   readonly iban?: string;
 
   /** Optional SWIFT/BIC (8 or 11 characters). */
   @IsOptional()
   @IsString()
-  @Matches(/^[A-Za-z]{6}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$/, {
-    message: 'validation:invalidSwift',
-  })
+  @Matches(
+    /^[A-Za-z]{6}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$/,
+    withViolation('validation:invalidSwift'),
+  )
   readonly swiftCode?: string;
 
   @IsNotEmpty()
@@ -152,18 +160,20 @@ export class WalletTransferInstructionsDto extends ManualMethodTextsDto {
 
   /** An Egyptian mobile wallet number: 01[0,1,2,5] + 8 digits; `+20`, spaces allowed. */
   @IsString()
-  @Matches(/^(\+?20|0)?\s*1[0125](\s*\d){8}$/, {
-    message: 'validation:invalidWalletNumber',
-  })
+  @Matches(
+    /^(\+?20|0)?\s*1[0125](\s*\d){8}$/,
+    withViolation('validation:invalidWalletNumber'),
+  )
   readonly walletNumber!: string;
 }
 
 export class InstapayInstructionsDto extends ManualMethodTextsDto {
   /** An InstaPay payment address: `name@instapay`. */
   @IsString()
-  @Matches(/^[A-Za-z0-9._-]{2,64}@instapay$/i, {
-    message: 'validation:invalidInstapayAddress',
-  })
+  @Matches(
+    /^[A-Za-z0-9._-]{2,64}@instapay$/i,
+    withViolation('validation:invalidInstapayAddress'),
+  )
   readonly instapayAddress!: string;
 }
 

@@ -39,8 +39,8 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
   // PATCH in this file mutates the one shared row real signups also read
   // (`OrganizationSubscriptionBootstrapService`). Confirmed live, twice
   // over separate phases of this project, that leaving it mutated (this
-  // file's own "durationDays: 0 is a legitimate value" test is the
-  // reproducible culprit) breaks real trial bootstrapping for every
+  // file's former "durationDays: 0 is a legitimate value" test was the
+  // reproducible culprit; B8 now refuses 0) breaks real trial bootstrapping for every
   // organization created afterward, including by a real human testing the
   // real app, until someone notices and manually repairs it. Snapshot
   // before this file's own writes and restore after, exactly like a
@@ -50,7 +50,8 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
   let originalTrialPolicy: { enabled: boolean; durationDays: number };
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    // Field violations as `main.ts` answers them (B8 tests read them).
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -261,15 +262,34 @@ describe('Plan/Add-on catalog + Trial Policy (e2e)', () => {
       .expect(400);
   });
 
-  it('durationDays: 0 is a legitimate value regardless of enabled (no invented minimum)', async () => {
-    const user = await signUpAndSignIn(app, 'trial-zero');
+  it('B8 V23 — durationDays outside 1..365 whole days is refused on its field, naming the range', async () => {
+    const user = await signUpAndSignIn(app, 'trial-range');
     await makePlatformOwner(admin, user.userId);
+    const before = await admin.trialPolicy.findFirstOrThrow();
 
-    const response = await request(app.getHttpServer())
+    // 0 used to be accepted and gave every new organization a trial that
+    // ended at once; turning trials off is `enabled: false`.
+    for (const durationDays of [0, -3, 2.5, 1000, 'abc']) {
+      const response = await request(app.getHttpServer())
+        .patch('/trial-policy')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({ enabled: true, durationDays })
+        .expect(400);
+      expect(response.body.error.violations).toEqual([
+        {
+          field: 'durationDays',
+          messageKey: 'validation:integerRange',
+          values: { min: 1, max: 365 },
+        },
+      ]);
+    }
+    const after = await admin.trialPolicy.findFirstOrThrow();
+    expect(after.durationDays).toBe(before.durationDays);
+
+    await request(app.getHttpServer())
       .patch('/trial-policy')
       .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ enabled: true, durationDays: 0 })
+      .send({ enabled: false, durationDays: 365 })
       .expect(200);
-    expect(response.body.durationDays).toBe(0);
   });
 });

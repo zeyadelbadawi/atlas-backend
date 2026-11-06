@@ -51,3 +51,11 @@ export const ACADEMY_MANUAL_PROVIDER_KEY = 'academy_manual';
 
 /** The longest transfer reference a payer may type next to their proof. */
 export const MAX_PAYER_REFERENCE_LENGTH = 120;
+
+/**
+ * B8 (UX audit) V29 — a commission is sent in basis points (0..10,000) but
+ * typed as a percentage, so its range violation speaks in percent:
+ * `errors.commission.percentageRange` with `{ min: 0, max: 100 }`.
+ */
+export const COMMISSION_RANGE_MESSAGE_KEY = 'errors.commission.percentageRange';
+export const COMMISSION_RANGE_PERCENT = { min: 0, max: 100 } as const;

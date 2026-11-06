@@ -112,14 +112,38 @@ function platformListCommonWhere(
   };
 }
 
-/** Search terms every payment row can answer: its id (exact), provider reference, method key and provider. */
-function paymentSearchTerms(search: string): Prisma.PaymentWhereInput[] {
+/**
+ * Search terms every payment row can answer: its id (exact), provider
+ * reference, method key and provider, and the transfer reference the payer
+ * typed on any of its proofs (B8 (UX audit) V02 — the reviewer searches by
+ * the reference printed on the bank statement).
+ */
+export function paymentSearchTerms(search: string): Prisma.PaymentWhereInput[] {
   const contains = { contains: search, mode: 'insensitive' as const };
   return [
     { id: search },
     { providerReference: contains },
     { methodKey: contains },
     { provider: contains },
+    { proofs: { some: { payerReference: contains } } },
+  ];
+}
+
+/**
+ * The subscription review list's search: `paymentSearchTerms` plus the
+ * checkout id — the transfer reference the customer is told to use
+ * (B8 (UX audit) V02; matched as a substring, case-insensitive, because a
+ * bank's reference field often cuts or upper-cases it) — and the paying
+ * organization's name, case-insensitive.
+ */
+export function subscriptionPaymentSearchTerms(
+  search: string,
+): Prisma.PaymentWhereInput[] {
+  const contains = { contains: search, mode: 'insensitive' as const };
+  return [
+    ...paymentSearchTerms(search),
+    { checkoutId: contains },
+    { organization: { is: { name: contains } } },
   ];
 }
 
@@ -213,18 +237,7 @@ export class PaymentsRepository {
     const where: Prisma.PaymentWhereInput = {
       checkoutId: { not: null },
       ...platformListCommonWhere(filter),
-      ...(search
-        ? {
-            OR: [
-              ...paymentSearchTerms(search),
-              {
-                organization: {
-                  is: { name: { contains: search, mode: 'insensitive' as const } },
-                },
-              },
-            ],
-          }
-        : {}),
+      ...(search ? { OR: subscriptionPaymentSearchTerms(search) } : {}),
     };
 
     const [items, totalItems] = await Promise.all([

@@ -49,7 +49,11 @@ import { PlanChangeNoticeService } from './plan-change-notice.service';
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
 import { toPlanResponse } from '../../plans/dto/plan.contract';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
-import { assertValidFeatures, assertValidLimits } from '../dto/update-plan.dto';
+import {
+  assertValidFeatures,
+  assertValidLimits,
+  planPricingViolations,
+} from '../dto/update-plan.dto';
 import type {
   ArchivePlanDto,
   CreatePlanDto,
@@ -137,24 +141,31 @@ export class PlatformPlansService {
     private readonly planChangeNoticeService: PlanChangeNoticeService,
   ) {}
 
-  private assertCatalogShape(
-    limits?: Record<string, unknown>,
-    features?: Record<string, unknown>,
-  ): void {
-    const errors = [
-      ...(limits ? assertValidLimits(limits) : []),
-      ...(features ? assertValidFeatures(features) : []),
+  /**
+   * The rules a DTO decorator cannot express — limit/feature maps and the
+   * yearly-versus-monthly price — as field violations on their own paths
+   * (B8 (UX audit) V09/V10), all reported in one 400.
+   */
+  private assertCatalogShape(payload: {
+    readonly limits?: Record<string, unknown>;
+    readonly features?: Record<string, unknown>;
+    readonly pricing?: CreatePlanDto['pricing'];
+  }): void {
+    const violations = [
+      ...planPricingViolations(payload.pricing),
+      ...(payload.limits ? assertValidLimits(payload.limits) : []),
+      ...(payload.features ? assertValidFeatures(payload.features) : []),
     ];
-    if (errors.length > 0) {
+    if (violations.length > 0) {
       throw new BadRequestException({
         messageKey: 'errors.validation.failed',
-        details: errors,
+        violations,
       });
     }
   }
 
   async create(platformOwnerId: string, payload: CreatePlanDto): Promise<PlanResponse> {
-    this.assertCatalogShape(payload.limits, payload.features);
+    this.assertCatalogShape(payload);
 
     const existing = await this.prisma.plan.findUnique({
       where: { key: payload.key },
@@ -217,7 +228,7 @@ export class PlatformPlansService {
     key: string,
     payload: UpdatePlanDto,
   ): Promise<PlanResponse> {
-    this.assertCatalogShape(payload.limits, payload.features);
+    this.assertCatalogShape(payload);
 
     const outcome = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.plan.findUnique({ where: { key } });
@@ -504,11 +515,11 @@ export class PlatformPlansService {
     key: string,
     proposedLimits: Record<string, number | 'unlimited'>,
   ): Promise<PlanLimitImpactResponse> {
-    const errors = assertValidLimits(proposedLimits);
-    if (errors.length > 0) {
+    const violations = assertValidLimits(proposedLimits);
+    if (violations.length > 0) {
       throw new BadRequestException({
         messageKey: 'errors.validation.failed',
-        details: errors,
+        violations,
       });
     }
 

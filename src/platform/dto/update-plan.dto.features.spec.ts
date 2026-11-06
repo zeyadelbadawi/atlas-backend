@@ -20,17 +20,16 @@ describe('assertValidFeatures', () => {
 
   it('rejects any other unknown key', () => {
     expect(assertValidFeatures({ liveSessions: false, notARealFeature: true })).toEqual([
-      'features.notARealFeature is not a plan feature key',
+      { field: 'features.notARealFeature', messageKey: 'validation:invalid' },
     ]);
   });
 
   it('requires liveSessions as a boolean', () => {
-    expect(assertValidFeatures({})).toEqual(['features.liveSessions must be a boolean']);
-    expect(assertValidFeatures({ cms: true })).toEqual([
-      'features.liveSessions must be a boolean',
-    ]);
-    expect(assertValidFeatures({ liveSessions: 'yes' })).toEqual([
-      'features.liveSessions must be a boolean',
-    ]);
+    const missing = [
+      { field: 'features.liveSessions', messageKey: 'validation:invalid' },
+    ];
+    expect(assertValidFeatures({})).toEqual(missing);
+    expect(assertValidFeatures({ cms: true })).toEqual(missing);
+    expect(assertValidFeatures({ liveSessions: 'yes' })).toEqual(missing);
   });
 });
