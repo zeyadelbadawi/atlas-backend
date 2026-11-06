@@ -670,6 +670,19 @@ describe('P64 Communications C3 — new transactional events and digests (e2e)',
   // =====================================================================
 
   describe('digests', () => {
+    /**
+     * `sendDueDigests` sends EVERY due digest in the database. Daily windows
+     * close at 08:00 local (06:00 UTC for Cairo), so digests other suites in
+     * this shard left open become due when a run crosses that hour and were
+     * counted here (expected 1, got 9). Flush them first, so each test counts
+     * only its own.
+     */
+    beforeEach(async () => {
+      await dispatcher.sendDueDigests();
+      sent.length = 0;
+      sendSpy.mockClear();
+    });
+
     /** A learner who asked for a DAILY digest of engagement email. */
     function digestLearner(label: string, language?: 'en' | 'ar') {
       return createUser(label, {
