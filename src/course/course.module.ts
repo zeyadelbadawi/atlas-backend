@@ -18,6 +18,10 @@
  * here even though `AcademyModule` (already imported) also depends on
  * `PlansModule` — `PlansModule` depends on neither `AcademyModule` nor
  * `CourseModule`, so this stays a clean DAG.
+ *
+ * Imports `CourseCompletionRecomputeQueueModule` (the completion fan-out
+ * queue + producer only) for `deleteSection`/`attachItem`/`detachItem` —
+ * see that module's doc comment for why it is not `LearningModule`.
  */
 import { Module } from '@nestjs/common';
 import { AuthCoreModule } from '../identity/auth-core.module';
@@ -35,9 +39,19 @@ import { CourseSectionsRepository } from './repositories/course-sections.reposit
 import { CourseLessonsRepository } from './repositories/course-lessons.repository';
 import { LessonContentsRepository } from './repositories/lesson-contents.repository';
 import { CourseInstructorsRepository } from './repositories/course-instructors.repository';
+import { CourseCompletionRecomputeQueueModule } from '../learning/queue/course-completion-recompute-queue.module';
 
 @Module({
-  imports: [AuthCoreModule, TenancyModule, AcademyModule, PlansModule],
+  imports: [
+    AuthCoreModule,
+    TenancyModule,
+    AcademyModule,
+    PlansModule,
+    // Unit deletion and unit attach/detach can change learners' course
+    // completion; this queue-only module carries the producer without
+    // importing `LearningModule` (which imports this one).
+    CourseCompletionRecomputeQueueModule,
+  ],
   controllers: [CoursesController, CourseCurriculumController],
   providers: [
     CoursesService,

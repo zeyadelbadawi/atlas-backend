@@ -28,6 +28,7 @@ import { PROVISIONING_QUEUE } from '../../provisioning/queue/provisioning.types'
 import { QUIZ_DEADLINE_QUEUE } from '../../learning/queue/quiz-deadline.types';
 import { DOMAIN_VERIFICATION_SWEEP_QUEUE } from '../../domain/queue/domain-verification-sweep.types';
 import { PHASE2_MAINTENANCE_QUEUE } from '../../learning/queue/phase2-maintenance.types';
+import { COURSE_COMPLETION_RECOMPUTE_QUEUE } from '../../learning/queue/course-completion-recompute.types';
 
 export const OBSERVED_QUEUES: readonly string[] = [
   COMMUNICATIONS_QUEUE,
@@ -45,6 +46,7 @@ export const OBSERVED_QUEUES: readonly string[] = [
   QUIZ_DEADLINE_QUEUE,
   DOMAIN_VERIFICATION_SWEEP_QUEUE,
   PHASE2_MAINTENANCE_QUEUE,
+  COURSE_COMPLETION_RECOMPUTE_QUEUE,
 ];
 
 export interface DependencyProbe {

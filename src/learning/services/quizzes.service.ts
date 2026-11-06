@@ -69,6 +69,8 @@ import { canStartAttempt } from './quiz-engine.util';
 import { QuizAttemptsRepository } from '../repositories/quiz-attempts.repository';
 import { FeatureFlagsService } from '../../common/flags/feature-flags.service';
 import { diffListCounts } from '../../audit-log/utils/audit-diff.util';
+import { CourseCompletionRecomputeProducer } from '../queue/course-completion-recompute.producer';
+import { isCompletionRelevantItemChange } from '../queue/course-completion-recompute.types';
 
 /**
  * Task 3 — what makes two stored questions "the same" for the audit count:
@@ -127,6 +129,7 @@ export class QuizzesService {
     private readonly quizAttemptsRepository: QuizAttemptsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly featureFlags: FeatureFlagsService,
+    private readonly completionRecompute: CourseCompletionRecomputeProducer,
   ) {}
 
   /** Which flag-gated quiz settings this academy's attempts would honour (see `assertQuizSettingsAvailable`). */
@@ -483,7 +486,10 @@ export class QuizzesService {
   ): Promise<QuizAuthoringResponse> {
     this.assertValidQuestions(payload.questions);
 
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
+    const out = await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
@@ -538,8 +544,14 @@ export class QuizzesService {
         context: { courseId },
       });
 
+      if (isCompletionRelevantItemChange(null, quiz)) recomputeAcademyId = academyId;
       return toQuizAuthoringResponse(quiz);
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
+    return out;
   }
 
   /** `questions`, when present, REPLACES the quiz's entire question/option set (see `UpdateQuizDto`/`QuizzesRepository.replaceQuestions`'s own doc comments) — omit it entirely to update only title/description/status/passingScore/maxAttempts. */
@@ -553,7 +565,10 @@ export class QuizzesService {
       this.assertValidQuestions(payload.questions);
     }
 
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
+    const out = await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
@@ -672,11 +687,23 @@ export class QuizzesService {
         after: updated as unknown as Record<string, unknown>,
       });
 
+      // Placement (`sectionId`; `null` detaches), `status` and
+      // `requiredForCompletion` are what learner completion reads.
+      if (isCompletionRelevantItemChange(existing, updated))
+        recomputeAcademyId = academyId;
       return toQuizAuthoringResponse(updated!);
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
+    return out;
   }
 
   async deleteQuiz(userId: string, courseId: string, quizId: string): Promise<void> {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
     await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
@@ -724,7 +751,14 @@ export class QuizzesService {
         targetLabel: existing.title,
         context: { courseId },
       });
+      // No learner has touched it (refused above otherwise), but a
+      // required, counted quiz still stood between every learner and done.
+      if (isCompletionRelevantItemChange(existing, null)) recomputeAcademyId = academyId;
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
   }
 
   /**
