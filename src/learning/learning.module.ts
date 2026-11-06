@@ -116,6 +116,8 @@ import { QuizDeadlineProcessor } from './queue/quiz-deadline.processor';
 import { QUIZ_DEADLINE_QUEUE } from './queue/quiz-deadline.types';
 import { CERTIFICATE_JOBS_QUEUE } from '../certificates/queue/certificate-jobs.types';
 import { ForensicWatermarkModule } from '../forensic-watermark/forensic-watermark.module';
+import { CourseCompletionRecomputeQueueModule } from './queue/course-completion-recompute-queue.module';
+import { CourseCompletionRecomputeProcessor } from './queue/course-completion-recompute.processor';
 
 @Module({
   imports: [
@@ -139,6 +141,9 @@ import { ForensicWatermarkModule } from '../forensic-watermark/forensic-watermar
     // completion evaluator enqueues into (processed by CertificatesModule).
     BullModule.registerQueue({ name: QUIZ_DEADLINE_QUEUE }),
     BullModule.registerQueue({ name: CERTIFICATE_JOBS_QUEUE }),
+    // Completion fan-out after an authoring change: the queue + producer
+    // (shared with `CourseModule`); the processor is provided below.
+    CourseCompletionRecomputeQueueModule,
     // Mandatory forensic video watermark: issued on every video grant,
     // touched by the heartbeat, pruned by the maintenance sweep.
     ForensicWatermarkModule,
@@ -203,6 +208,7 @@ import { ForensicWatermarkModule } from '../forensic-watermark/forensic-watermar
     CourseCompletionService,
     QuizDeadlineProducer,
     QuizDeadlineProcessor,
+    CourseCompletionRecomputeProcessor,
   ],
   exports: [
     ContentGrantSigner,

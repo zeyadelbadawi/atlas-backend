@@ -58,6 +58,8 @@ export interface SubmissionAttachmentUploadResponse {
 import type { CreateAssignmentSubmissionDto } from '../dto/create-assignment-submission.dto';
 import type { CreateAssignmentDto } from '../dto/create-assignment.dto';
 import type { UpdateAssignmentDto } from '../dto/update-assignment.dto';
+import { CourseCompletionRecomputeProducer } from '../queue/course-completion-recompute.producer';
+import { isCompletionRelevantItemChange } from '../queue/course-completion-recompute.types';
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import {
@@ -83,6 +85,7 @@ export class AssignmentsService {
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly courseSequence: CourseSequenceService,
     private readonly opLedger: LearnerOpLedger,
+    private readonly completionRecompute: CourseCompletionRecomputeProducer,
   ) {}
 
   /**
@@ -652,7 +655,10 @@ export class AssignmentsService {
     courseId: string,
     payload: CreateAssignmentDto,
   ): Promise<AssignmentResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
+    const out = await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
@@ -692,8 +698,14 @@ export class AssignmentsService {
         context: { courseId },
       });
 
+      if (isCompletionRelevantItemChange(null, created)) recomputeAcademyId = academyId;
       return toAssignmentResponse(created);
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
+    return out;
   }
 
   async updateAssignment(
@@ -702,7 +714,10 @@ export class AssignmentsService {
     assignmentId: string,
     payload: UpdateAssignmentDto,
   ): Promise<AssignmentResponse> {
-    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
+    const out = await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
         this.coursesRepository,
@@ -751,8 +766,18 @@ export class AssignmentsService {
         after: updated as unknown as Record<string, unknown>,
       });
 
+      // Placement, `status` and `requiredForCompletion` are what learner
+      // completion reads. (This endpoint never detaches; unit detach is
+      // `UnitCurriculumService.detachItem`.)
+      if (isCompletionRelevantItemChange(existing, updated))
+        recomputeAcademyId = academyId;
       return toAssignmentResponse(updated);
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
+    return out;
   }
 
   async deleteAssignment(
@@ -760,6 +785,9 @@ export class AssignmentsService {
     courseId: string,
     assignmentId: string,
   ): Promise<void> {
+    // Set inside the transaction when this edit can change learners' course
+    // completion; the fan-out is queued only once it has committed.
+    let recomputeAcademyId: string | null = null;
     await this.tenancyContextService.runInUserContext(userId, async (tx) => {
       const academyId = await assertCanAuthorCourseContent(
         tx,
@@ -808,6 +836,11 @@ export class AssignmentsService {
         targetLabel: existing.title,
         context: { courseId },
       });
+      if (isCompletionRelevantItemChange(existing, null)) recomputeAcademyId = academyId;
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (recomputeAcademyId) {
+      await this.completionRecompute.enqueue(courseId, recomputeAcademyId);
+    }
   }
 }

@@ -56,6 +56,7 @@ import {
   persistUnitOrder,
   readUnitItems,
 } from './curriculum-ordering';
+import { CourseCompletionRecomputeProducer } from '../../learning/queue/course-completion-recompute.producer';
 
 /** See `AcademiesService.MANAGING_ROLES` — identical rule. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -71,6 +72,7 @@ export class CourseCurriculumService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly completionRecompute: CourseCompletionRecomputeProducer,
   ) {}
 
   async getSections(
@@ -191,6 +193,7 @@ export class CourseCurriculumService {
     organizationId: string,
     userId: string,
   ): Promise<void> {
+    let completionChanged = false;
     await this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
       const role = await this.assertCanManage(tx, academyId, userId, courseId);
       await this.assertCourseInAcademy(tx, courseId, academyId);
@@ -201,6 +204,16 @@ export class CourseCurriculumService {
       // `lesson_progress`, so it is refused once any learner has progress
       // in it (see `learner-activity.guard.ts`). Tenant context: complete.
       await assertNoLearnerActivity(tx, { kind: 'section', id: sectionId });
+      // The unit's quizzes and assignments survive it, detached (`ON DELETE
+      // SET NULL`), and a detached item no longer counts toward any
+      // learner's completion — so a PUBLISHED one here can change it. Its
+      // lessons cannot: the delete is refused above once any learner has a
+      // progress row in them, and those rows are the lesson evidence.
+      const [publishedQuizzes, publishedAssignments] = await Promise.all([
+        tx.quiz.count({ where: { sectionId, status: 'published' } }),
+        tx.assignment.count({ where: { sectionId, status: 'published' } }),
+      ]);
+      completionChanged = publishedQuizzes + publishedAssignments > 0;
       await this.sectionsRepository.delete(tx, sectionId);
 
       await this.auditLogWriterService.write(tx, {
@@ -215,6 +228,8 @@ export class CourseCurriculumService {
         context: { courseId },
       });
     });
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (completionChanged) await this.completionRecompute.enqueue(courseId, academyId);
   }
 
   async reorderSections(

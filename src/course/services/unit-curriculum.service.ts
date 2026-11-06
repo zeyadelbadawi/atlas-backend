@@ -54,6 +54,7 @@ import {
   persistUnitOrder,
   readUnitItems,
 } from './curriculum-ordering';
+import { CourseCompletionRecomputeProducer } from '../../learning/queue/course-completion-recompute.producer';
 
 /** See `CourseCurriculumService.MANAGING_ROLES` — identical rule. */
 const MANAGING_ROLES = new Set(['owner', 'administrator', 'manager']);
@@ -66,6 +67,7 @@ export class UnitCurriculumService {
     private readonly academyMembersRepository: AcademyMembersRepository,
     private readonly courseInstructorsRepository: CourseInstructorsRepository,
     private readonly auditLogWriterService: AuditLogWriterService,
+    private readonly completionRecompute: CourseCompletionRecomputeProducer,
   ) {}
 
   /** The unified, ordered curriculum of one unit (author view). */
@@ -146,7 +148,8 @@ export class UnitCurriculumService {
     userId: string,
     dto: AttachCurriculumItemDto,
   ): Promise<CurriculumItemResponse[]> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let completionChanged = false;
+    const items = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -159,11 +162,23 @@ export class UnitCurriculumService {
           dto.type === 'quiz'
             ? tx.quiz.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, sectionId: true, title: true },
+                select: {
+                  id: true,
+                  courseId: true,
+                  sectionId: true,
+                  title: true,
+                  status: true,
+                },
               })
             : tx.assignment.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, sectionId: true, title: true },
+                select: {
+                  id: true,
+                  courseId: true,
+                  sectionId: true,
+                  title: true,
+                  status: true,
+                },
               });
         const found = await readItem();
         if (!found || found.courseId !== courseId) {
@@ -212,11 +227,18 @@ export class UnitCurriculumService {
           targetLabel: existing.title,
           context: { courseId, sectionId },
         });
+        // A published item placed for the first time joins every learner's
+        // course; moving one between units changes nothing.
+        completionChanged =
+          existing.sectionId === null && existing.status === 'published';
 
         const items = await readUnitItems(tx, sectionId);
         return items.map((item) => ({ ...item, sectionId }));
       },
     );
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (completionChanged) await this.completionRecompute.enqueue(courseId, academyId);
+    return items;
   }
 
   /** Detach a quiz/assignment from its unit (it survives as course-level content). */
@@ -228,7 +250,8 @@ export class UnitCurriculumService {
     userId: string,
     dto: AttachCurriculumItemDto,
   ): Promise<CurriculumItemResponse[]> {
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let completionChanged = false;
+    const items = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -243,11 +266,23 @@ export class UnitCurriculumService {
           dto.type === 'quiz'
             ? await tx.quiz.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, sectionId: true, title: true },
+                select: {
+                  id: true,
+                  courseId: true,
+                  sectionId: true,
+                  title: true,
+                  status: true,
+                },
               })
             : await tx.assignment.findUnique({
                 where: { id: dto.itemId },
-                select: { id: true, courseId: true, sectionId: true, title: true },
+                select: {
+                  id: true,
+                  courseId: true,
+                  sectionId: true,
+                  title: true,
+                  status: true,
+                },
               });
         if (
           !existing ||
@@ -277,11 +312,17 @@ export class UnitCurriculumService {
           targetLabel: existing.title,
           context: { courseId, sectionId },
         });
+        // A detached item no longer counts toward any learner's completion;
+        // a published one did until now.
+        completionChanged = existing.status === 'published';
 
         const items = await readUnitItems(tx, sectionId);
         return items.map((item) => ({ ...item, sectionId }));
       },
     );
+    // After the commit — see `CourseCompletionRecomputeProducer.enqueue`.
+    if (completionChanged) await this.completionRecompute.enqueue(courseId, academyId);
+    return items;
   }
 
   /**

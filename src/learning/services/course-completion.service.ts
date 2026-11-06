@@ -51,6 +51,7 @@ import {
   CERTIFICATE_JOBS_QUEUE,
   type CertificateIssueJobPayload,
 } from '../../certificates/queue/certificate-jobs.types';
+import { CourseCompletionRecomputeProducer } from '../queue/course-completion-recompute.producer';
 
 /** Who may edit a course's completion rule (the academy's managing tier). */
 const COURSE_RULE_MANAGING_ROLES: ReadonlySet<string> = new Set([
@@ -126,6 +127,39 @@ export function certificateIssueJobId(enrollmentId: string, suffix?: 'followup')
     : `certificate-issue-${enrollmentId}`;
 }
 
+/** Whether two rules decide completion identically. */
+function sameCompletionRule(a: CompletionRule, b: CompletionRule): boolean {
+  return (
+    a.lessons === b.lessons &&
+    a.requiredQuizzes === b.requiredQuizzes &&
+    a.requiredAssignments === b.requiredAssignments &&
+    a.minOverallScore === b.minOverallScore
+  );
+}
+
+/**
+ * The course's REQUIRED quizzes and assignments among the items learner
+ * completion counts (published and placed in a unit, as `evaluate` reads
+ * them), as one comparable key. A required flag flipped on a draft or
+ * unplaced item changes no learner's completion.
+ */
+async function requiredCountedItemIds(
+  tx: Prisma.TransactionClient,
+  courseId: string,
+): Promise<string> {
+  const where = {
+    courseId,
+    requiredForCompletion: true,
+    status: 'published' as const,
+    sectionId: { not: null },
+  };
+  const [quizzes, assignments] = await Promise.all([
+    tx.quiz.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } }),
+    tx.assignment.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } }),
+  ]);
+  return JSON.stringify([quizzes.map((row) => row.id), assignments.map((row) => row.id)]);
+}
+
 @Injectable()
 export class CourseCompletionService {
   private readonly logger = new Logger(CourseCompletionService.name);
@@ -139,6 +173,7 @@ export class CourseCompletionService {
     private readonly auditLogWriterService: AuditLogWriterService,
     @InjectQueue(CERTIFICATE_JOBS_QUEUE) private readonly certificateQueue: Queue,
     private readonly communications: CommunicationService,
+    private readonly completionRecompute: CourseCompletionRecomputeProducer,
   ) {}
 
   /** Evidence + evaluation only — no writes. Used by the learner completion screen. */
@@ -627,7 +662,8 @@ export class CourseCompletionService {
     // the quiz/assignment `required_for_completion` flags under the author tier
     // (`quizzes_author_update` / `assignments_author_update`), which is a user
     // policy — a tenant-only context would silently update zero rows.
-    return this.tenancyContextService.runInTenantAndUserContext(
+    let completionChanged = false;
+    const view = await this.tenancyContextService.runInTenantAndUserContext(
       organizationId,
       userId,
       async (tx) => {
@@ -645,6 +681,9 @@ export class CourseCompletionService {
         });
         if (!course) throw new NotFoundException({ messageKey: 'errors.notFound' });
         const current = parseCompletionRule(course.completionRule);
+        // What learner completion reads, before this edit — compared with
+        // the same read once every write below has been made.
+        const requiredBefore = await requiredCountedItemIds(tx, courseId);
         const next: CompletionRule = {
           lessons: dto.lessons ?? current.lessons,
           requiredQuizzes: dto.requiredQuizzes ?? current.requiredQuizzes,
@@ -726,9 +765,17 @@ export class CourseCompletionService {
                 : dto.certificateMinScore,
           },
         });
+        completionChanged =
+          !sameCompletionRule(current, next) ||
+          requiredBefore !== (await requiredCountedItemIds(tx, courseId));
         return this.buildStaffView(tx, academyId, courseId);
       },
     );
+    // After the commit: every enrolled learner's stored verdict follows the
+    // new rule now, not on their next read. The certificate settings alone
+    // do not change completion and are left to each learner's next recompute.
+    if (completionChanged) await this.completionRecompute.enqueue(courseId, academyId);
+    return view;
   }
 
   /**
