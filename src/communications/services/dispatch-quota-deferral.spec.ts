@@ -20,7 +20,11 @@ import { NoopCommunicationSuppression } from './communication-suppression.interf
 
 type Row = Record<string, unknown>;
 
-function harness(row: Row, campaign: Row | null = null) {
+function harness(
+  row: Row,
+  campaign: Row | null = null,
+  academy: Row | null = { status: 'active' },
+) {
   const executed: string[] = [];
   const tx = {
     $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
@@ -37,6 +41,7 @@ function harness(row: Row, campaign: Row | null = null) {
     communicationCampaign: { findUnique: jest.fn(async () => campaign) },
     organizationMembership: { count: jest.fn(async () => 1) },
     academyMember: { count: jest.fn(async () => 0) },
+    academy: { findUnique: jest.fn(async () => academy) },
   };
   const tenancy = {
     runInUserContext: jest.fn(async (_u: string, work: (t: typeof tx) => unknown) =>
@@ -279,5 +284,67 @@ describe('dispatch — B2 stale short-notice reminders', () => {
     await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
       'sent',
     );
+  });
+});
+
+describe('dispatch — "your academy is ready" needs its academy', () => {
+  const readyRow = () =>
+    outboxRow({
+      key: 'provisioning.completed',
+      category: 'lifecycle',
+      academyId: 'academy-1',
+      organizationId: 'org-1',
+      entityType: 'provisioning_request',
+      entityId: 'req-1',
+      values: { academyName: 'Nile Academy' },
+      channels: { inApp: true, email: 'always' },
+    });
+
+  it('sends it while the academy exists', async () => {
+    const row = readyRow();
+    const h = harness(row);
+    h.transport.send.mockResolvedValue({ provider: 'brevo', providerMessageId: 'm-r' });
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'sent',
+    );
+    expect(h.tx.academy.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'academy-1' } }),
+    );
+  });
+
+  it('does not send it for an academy deleted (archived) before the held email fired', async () => {
+    const row = readyRow();
+    const h = harness(row, null, { status: 'archived' });
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'suppressed',
+    );
+    expect(h.transport.send).not.toHaveBeenCalled();
+    expect(h.tx.communicationOutbox.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          state: 'suppressed',
+          lastError: 'academy_archived',
+        }),
+      }),
+    );
+  });
+
+  it('does not send it when the academy row is gone', async () => {
+    const row = readyRow();
+    const h = harness(row, null, null);
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'suppressed',
+    );
+    expect(h.transport.send).not.toHaveBeenCalled();
+  });
+
+  it('never asks about the academy for an email that does not depend on one', async () => {
+    const row = outboxRow({ academyId: 'academy-1' });
+    const h = harness(row, null, null);
+    h.transport.send.mockResolvedValue({ provider: 'brevo', providerMessageId: 'm-x' });
+    await expect(h.service.dispatch(row.id as string, { made: 0, max: 6 })).resolves.toBe(
+      'sent',
+    );
+    expect(h.tx.academy.findUnique).not.toHaveBeenCalled();
   });
 });

@@ -64,6 +64,15 @@ export interface EmitInput {
    * STAFF reuses a learner key but belongs to the Management dashboard).
    */
   readonly notificationContext?: NotificationContextValue;
+  /**
+   * The email must not go out before this instant (the outbox row's
+   * `available_at` is the later of this and the cooldown). The durable row
+   * is the schedule: the dispatch hint is delayed to it, and if that hint
+   * is lost (Redis flush, worker restart) the one-minute sweep still sends
+   * it. Used by `provisioning.completed`, held until the owner's build
+   * screen reaches 100 % (`provisioning/dto/presented-build.ts`).
+   */
+  readonly notBefore?: Date;
 }
 
 /**
@@ -88,6 +97,8 @@ export interface EmitResult {
   /** `false` on a deduped retry — nothing new was written. */
   readonly created: boolean;
   readonly outboxId: string | null;
+  /** When the written outbox row becomes dispatchable (absent when nothing was written). */
+  readonly availableAt?: Date;
 }
 
 /** The channel policy snapshot stored on the outbox row. */
@@ -192,12 +203,16 @@ export class CommunicationService {
 
     const outboxId = randomUUID();
     const now = new Date();
-    const availableAt = await this.cooldownAdjustedAvailability(
+    const cooldownAvailableAt = await this.cooldownAdjustedAvailability(
       input.recipientUserId,
       input.key,
       entry,
       now,
     );
+    const availableAt =
+      input.notBefore && input.notBefore.getTime() > cooldownAvailableAt.getTime()
+        ? input.notBefore
+        : cooldownAvailableAt;
     const channels: OutboxChannels = {
       inApp: entry.channels.inApp === 'always',
       email: entry.channels.email,
@@ -227,7 +242,7 @@ export class CommunicationService {
       throw error;
     }
     this.metrics.recordOutbox(entry.category, 'pending');
-    return { created: true, outboxId };
+    return { created: true, outboxId, availableAt };
   }
 
   /**
@@ -360,11 +375,18 @@ export class CommunicationService {
 
   /**
    * Call AFTER the transaction that wrapped `emit` has committed. A hint
-   * to the worker, not a requirement — never throws.
+   * to the worker, not a requirement — never throws. Pass the emit's
+   * `availableAt` for a row held to a later instant (`notBefore`): the
+   * hint is then delayed to it instead of waking a worker that would find
+   * nothing claimable yet.
    */
-  async enqueueAfterCommit(outboxId: string | null): Promise<void> {
+  async enqueueAfterCommit(
+    outboxId: string | null,
+    availableAt?: Date | null,
+  ): Promise<void> {
     if (!outboxId) return;
-    await this.producer.enqueueDispatch(outboxId, 0);
+    const delayMs = availableAt ? Math.max(0, availableAt.getTime() - Date.now()) : 0;
+    await this.producer.enqueueDispatch(outboxId, 0, delayMs);
   }
 
   /**

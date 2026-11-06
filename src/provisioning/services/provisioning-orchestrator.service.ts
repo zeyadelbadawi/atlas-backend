@@ -78,6 +78,7 @@ import {
 } from '../dto/provisioning.constants';
 import type { ProvisioningErrorResponse } from '../dto/provisioning-step.contract';
 import { readRequestedBrand } from '../dto/requested-brand';
+import { presentedReadyAt } from '../dto/presented-build';
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -354,8 +355,13 @@ export class ProvisioningOrchestratorService {
     // `ready`. `retryBrandingStep` re-runs just this step afterwards.
     const isNonBlockingFailure =
       outcome.result === 'failed' && NON_BLOCKING_STEPS.has(stepKey);
-    const { shouldContinue, outboxId, shouldAutoCreateSupportCase } =
-      await this.runTenant(organizationId, async (tx) => {
+    const { shouldContinue, outboxId, availableAt, shouldAutoCreateSupportCase } =
+      await this.runTenant<{
+        shouldContinue: boolean;
+        outboxId: string | null;
+        availableAt: Date | null;
+        shouldAutoCreateSupportCase: boolean;
+      }>(organizationId, async (tx) => {
         if (outcome.result === 'failed' && !isNonBlockingFailure) {
           await this.provisioningStepsRepository.markFailed(
             tx,
@@ -399,6 +405,7 @@ export class ProvisioningOrchestratorService {
           return {
             shouldContinue: false,
             outboxId: created.outboxId,
+            availableAt: null,
             shouldAutoCreateSupportCase,
           };
         }
@@ -435,12 +442,18 @@ export class ProvisioningOrchestratorService {
             academyId: request.academyId,
             entity: { type: 'provisioning_request', id: provisioningRequestId },
             values: { academyName: request.requestedAcademyName },
+            // The owner's build screen reaches 100 % at `presentedReadyAt`;
+            // "your academy is ready" must not beat it. This runs at REAL
+            // completion, so slow provisioning (past that instant) sends at
+            // once — see `presented-build.ts`.
+            notBefore: presentedReadyAt(request),
           });
         }
 
         return {
           shouldContinue: !isFinalizationStep,
           outboxId: created.outboxId,
+          availableAt: created.availableAt ?? null,
           shouldAutoCreateSupportCase: false,
         };
       });
@@ -450,7 +463,7 @@ export class ProvisioningOrchestratorService {
     // outbox row (written inside the `tx` callback above, or not at all on
     // a deduped retry) exists. Delivery, channel and preference decisions
     // are the dispatcher's, never this orchestrator's.
-    await this.communicationService.enqueueAfterCommit(outboxId);
+    await this.communicationService.enqueueAfterCommit(outboxId, availableAt);
 
     // Phase 8 — a separate, best-effort write after the failure
     // transaction above has already committed, mirroring the email step

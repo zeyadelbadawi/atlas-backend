@@ -367,6 +367,15 @@ export class CommunicationDispatchService {
       });
     }
 
+    // An email that only holds while its academy exists ("your academy is
+    // ready", held to the build screen's 100 %) is not sent for an academy
+    // deleted in the meantime.
+    if (entry.requiresLiveAcademy && !(await this.academyIsLive(tx, row.academyId))) {
+      return this.settle(tx, outboxId, 'suppressed', 'academy_archived', {
+        inApp: channels.inApp,
+      });
+    }
+
     if (channels.email === 'never') {
       return this.settle(tx, outboxId, 'dispatched', null, {
         inApp: channels.inApp,
@@ -742,6 +751,19 @@ export class CommunicationDispatchService {
     }
     // Rethrow so BullMQ applies its backoff/retry (and keeps the exhausted job in the failed set).
     throw error;
+  }
+
+  /** The academy exists and is not archived (Atlas's delete). No academy on the row = nothing to check. */
+  private async academyIsLive(
+    tx: Prisma.TransactionClient,
+    academyId: string | null,
+  ): Promise<boolean> {
+    if (!academyId) return true;
+    const academy = await tx.academy.findUnique({
+      where: { id: academyId },
+      select: { status: true },
+    });
+    return !!academy && academy.status !== 'archived';
   }
 
   /** Writes the terminal state for a row that will not be emailed now, plus its in-app delivery row when the feed was written. */

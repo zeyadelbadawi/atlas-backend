@@ -30,6 +30,7 @@ import {
   type ProvisioningStage,
 } from './provisioning.constants';
 import { summarizeRequestedBrand, type RequestedBrandSummary } from './requested-brand';
+import { presentedReadyAt } from './presented-build';
 
 export interface ProvisioningRequestResponse {
   readonly id: string;
@@ -64,6 +65,12 @@ export interface ProvisioningRequestResponse {
   /** W2 — what the setup form asked for (palette yes/no, logo state), never the palette itself; absent when nothing was chosen. */
   readonly requestedBrand?: RequestedBrandSummary;
   readonly createdAt: string;
+  /**
+   * When the build screen reaches 100 % (`presented-build.ts`): the
+   * frontend's progress ends exactly here, and the "your academy is ready"
+   * email is held until here (or until the real completion, if later).
+   */
+  readonly presentedReadyAt: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly failedAt?: string;
@@ -115,6 +122,7 @@ export function toProvisioningRequestResponse(
     stallThresholdSeconds,
     requestedBrand: summarizeRequestedBrand(request.requestedBrand),
     createdAt: request.createdAt.toISOString(),
+    presentedReadyAt: presentedReadyAt(request).toISOString(),
     startedAt: request.startedAt?.toISOString(),
     completedAt: request.completedAt?.toISOString(),
     failedAt: request.failedAt?.toISOString(),
