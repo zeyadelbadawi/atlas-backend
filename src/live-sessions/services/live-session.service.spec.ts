@@ -34,8 +34,9 @@ const COURSE = 'course-1';
 const ORG = 'org-1';
 const ACTOR = 'instructor-1';
 
-const START = new Date('2026-06-01T10:00:00.000Z');
-const END = new Date('2026-06-01T11:00:00.000Z');
+// A week ahead, on the hour: a start in the past is refused (B5).
+const START = new Date(Math.ceil((Date.now() + 7 * 86_400_000) / 3_600_000) * 3_600_000);
+const END = new Date(START.getTime() + 3_600_000);
 
 describe('LiveSessionService', () => {
   let service: LiveSessionService;
@@ -234,6 +235,30 @@ describe('LiveSessionService', () => {
       );
     });
 
+    it('REFUSES a start in the past, on scheduledStartAt (B5)', async () => {
+      const start = new Date(Date.now() - 3 * 86_400_000);
+      const error = await create({
+        scheduledStartAt: start,
+        scheduledEndAt: new Date(start.getTime() + 3_600_000),
+      }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        messageKey: 'errors.liveSessions.startInPast',
+        violations: [
+          { field: 'scheduledStartAt', messageKey: 'validation:scheduleInPast' },
+        ],
+      });
+    });
+
+    it('names the end field when the end is before the start (B5)', async () => {
+      const error = await create({ scheduledStartAt: END, scheduledEndAt: START }).catch(
+        (e: unknown) => e,
+      );
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        violations: [{ field: 'scheduledEndAt' }],
+      });
+    });
+
     it('REFUSES an unparseable date', async () => {
       await expect(
         create({ scheduledEndAt: new Date('not-a-date') }),
@@ -277,6 +302,41 @@ describe('LiveSessionService', () => {
           liveSessionId: 'ls-1',
           // New start is AFTER the existing end.
           patch: { scheduledStartAt: new Date(END.getTime() + 3600_000) },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('lets a session that has begun move its end without a past-start refusal (B5)', async () => {
+      const began = new Date(Date.now() - 10 * 60_000);
+      tx.liveSession.findFirst.mockResolvedValue({
+        ...existing,
+        scheduledStartAt: began,
+        scheduledEndAt: new Date(began.getTime() + 3_600_000),
+      });
+      await expect(
+        service.update(tx as never, {
+          academyId: ACADEMY,
+          organizationId: ORG,
+          liveSessionId: 'ls-1',
+          patch: {
+            scheduledStartAt: began,
+            scheduledEndAt: new Date(began.getTime() + 2 * 3_600_000),
+          },
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('REFUSES moving the start into the past (B5)', async () => {
+      const past = new Date(Date.now() - 86_400_000);
+      await expect(
+        service.update(tx as never, {
+          academyId: ACADEMY,
+          organizationId: ORG,
+          liveSessionId: 'ls-1',
+          patch: {
+            scheduledStartAt: past,
+            scheduledEndAt: new Date(past.getTime() + 3_600_000),
+          },
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });

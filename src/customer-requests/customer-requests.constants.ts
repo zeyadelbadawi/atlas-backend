@@ -1,3 +1,4 @@
+import { domainToASCII } from 'node:url';
 /**
  * Customer Requests — the vocabulary every layer shares.
  *
@@ -83,6 +84,30 @@ export interface DetailField {
   readonly key: string;
   readonly kind: 'text' | 'boolean';
   readonly maxLength?: number;
+  /** A check the text must pass, refused with `invalidKey` on that field. */
+  readonly validate?: (value: string) => boolean;
+  readonly invalidKey?: string;
+}
+
+const ASCII_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/i;
+const ASCII_TLD = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/i;
+
+/**
+ * B5 (UX audit) — a domain name, in any script. "my academy dot com" and
+ * "https://x.com" used to be saved as-is. The name is encoded with the
+ * IDNA rules (Node's `domainToASCII`, which also applies the rules for
+ * combining marks, so उदाहरण.भारत and أكاديمية.مصر pass) and the DNS limits
+ * are checked on the encoded form: labels of 1–63 characters, at most 253
+ * in all, a letters (or punycode) TLD. The submitted spelling is stored.
+ */
+export function isDomainName(value: string): boolean {
+  if (/[\s/:@]/.test(value)) return false;
+  const ascii = domainToASCII(value);
+  if (!ascii || ascii.length > 253) return false;
+  const labels = ascii.split('.');
+  if (labels.length < 2) return false;
+  const tld = labels[labels.length - 1];
+  return labels.every((label) => ASCII_LABEL.test(label)) && ASCII_TLD.test(tld);
 }
 
 export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
@@ -95,7 +120,13 @@ export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
     { key: 'references', kind: 'text', maxLength: 1000 },
   ],
   domain: [
-    { key: 'desiredDomain', kind: 'text', maxLength: 253 },
+    {
+      key: 'desiredDomain',
+      kind: 'text',
+      maxLength: 253,
+      validate: isDomainName,
+      invalidKey: 'errors.customerRequest.invalidDomain',
+    },
     { key: 'alreadyOwned', kind: 'boolean' },
     { key: 'registrar', kind: 'text', maxLength: 120 },
   ],

@@ -28,6 +28,9 @@ import type { Prisma } from '@prisma/client';
 import { AddOnAccessService } from './add-on-access.service';
 import { isEligibleLiveSessionHost } from '../utils/live-session-host.util';
 
+/** A minute of grace for "now" picked in a form (same rule as announcements). */
+const SCHEDULE_GRACE_MS = 60_000;
+
 /** A session must be at least this long — a 0-minute meeting is a mistake, not a choice. */
 export const MIN_SESSION_MINUTES = 5;
 /** And no longer than this. Guards against a typo turning into a year-long meeting. */
@@ -54,28 +57,67 @@ export class LiveSessionService {
   /**
    * Validates the schedule.
    *
-   * `now` is injected rather than read from the clock so this is testable
-   * and so a single request cannot disagree with itself about what "now"
-   * means partway through.
+   * B4/B5 (UX audit) — each refusal names the field it is about
+   * (`scheduledStartAt` / `scheduledEndAt`), so the dashboard shows it
+   * there instead of a generic toast. `checkStartInPast` refuses a start
+   * more than a minute ago: publishing such a session would create a
+   * meeting that is already over and notify students about it. `now` is
+   * injectable for tests and so one request agrees with itself.
    */
-  private assertValidSchedule(startAt: Date, endAt: Date): void {
+  private assertValidSchedule(
+    startAt: Date,
+    endAt: Date,
+    options: { readonly checkStartInPast?: boolean; readonly now?: number } = {},
+  ): void {
     if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
       throw new BadRequestException({
         messageKey: 'errors.liveSessions.invalidSchedule',
+        violations: [
+          {
+            field: Number.isNaN(startAt.getTime())
+              ? 'scheduledStartAt'
+              : 'scheduledEndAt',
+            messageKey: 'errors.liveSessions.invalidSchedule',
+          },
+        ],
+      });
+    }
+
+    const now = options.now ?? Date.now();
+    if (options.checkStartInPast && startAt.getTime() < now - SCHEDULE_GRACE_MS) {
+      throw new BadRequestException({
+        messageKey: 'errors.liveSessions.startInPast',
+        violations: [
+          { field: 'scheduledStartAt', messageKey: 'validation:scheduleInPast' },
+        ],
       });
     }
 
     if (endAt.getTime() <= startAt.getTime()) {
       throw new BadRequestException({
         messageKey: 'errors.liveSessions.endBeforeStart',
+        violations: [
+          { field: 'scheduledEndAt', messageKey: 'errors.liveSessions.endBeforeStart' },
+        ],
       });
     }
 
     const minutes = (endAt.getTime() - startAt.getTime()) / 60_000;
     if (minutes < MIN_SESSION_MINUTES || minutes > MAX_SESSION_MINUTES) {
+      const details = {
+        minMinutes: MIN_SESSION_MINUTES,
+        maxMinutes: MAX_SESSION_MINUTES,
+      };
       throw new BadRequestException({
         messageKey: 'errors.liveSessions.invalidDuration',
-        details: { minMinutes: MIN_SESSION_MINUTES, maxMinutes: MAX_SESSION_MINUTES },
+        details,
+        violations: [
+          {
+            field: 'scheduledEndAt',
+            messageKey: 'errors.liveSessions.invalidDuration',
+            values: details,
+          },
+        ],
       });
     }
   }
@@ -170,7 +212,9 @@ export class LiveSessionService {
     await this.addOnAccessService.assertUsable(tx, input.organizationId);
 
     await this.requireCourseInAcademy(tx, input.academyId, input.courseId);
-    this.assertValidSchedule(input.scheduledStartAt, input.scheduledEndAt);
+    this.assertValidSchedule(input.scheduledStartAt, input.scheduledEndAt, {
+      checkStartInPast: true,
+    });
 
     if (input.sectionId) {
       await this.assertSectionBelongsToCourse(tx, input.courseId, input.sectionId);
@@ -255,7 +299,12 @@ export class LiveSessionService {
     const startAt = args.patch.scheduledStartAt ?? existing.scheduledStartAt;
     const endAt = args.patch.scheduledEndAt ?? existing.scheduledEndAt;
     if (args.patch.scheduledStartAt || args.patch.scheduledEndAt) {
-      this.assertValidSchedule(startAt, endAt);
+      // Only a NEW start is checked against "now": moving the end of a
+      // session that has begun, or re-sending the stored start, is fine.
+      const startChanged =
+        args.patch.scheduledStartAt !== undefined &&
+        args.patch.scheduledStartAt.getTime() !== existing.scheduledStartAt.getTime();
+      this.assertValidSchedule(startAt, endAt, { checkStartInPast: startChanged });
     }
 
     if (args.patch.sectionId) {
