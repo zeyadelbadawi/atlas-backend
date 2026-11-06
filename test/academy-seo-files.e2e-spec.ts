@@ -169,7 +169,11 @@ describe('Academy robots.txt and sitemap.xml (e2e) — B0-WEB-01', () => {
       },
     });
     const noSitemap = await robots(host).expect(200);
-    expect(noSitemap.text).toBe('User-agent: *\nAllow: /\n');
+    // No `Sitemap:` line; the llms.txt pointer does not depend on the
+    // sitemap setting (SEO/AEO/GEO pass).
+    expect(noSitemap.text).toBe(
+      `User-agent: *\nAllow: /\n\n# A summary of this site for AI assistants: https://${host}/llms.txt\n`,
+    );
     await sitemap(host).expect(404);
 
     await admin.websiteConfiguration.update({
@@ -259,7 +263,17 @@ describe('Academy robots.txt and sitemap.xml (e2e) — B0-WEB-01', () => {
 
       await patchConfig(academyId, token, { defaultLocale: 'en' }).expect(200);
       await publish(academyId, token);
-      expect((await sitemap(host).expect(200)).text).toBe(english);
+      // The same URLs and alternates as before; only `lastmod` moves, since
+      // it now includes the last publish (SEO/AEO/GEO pass).
+      const restored = (await sitemap(host).expect(200)).text;
+      const lastmods = (xml: string) =>
+        [...xml.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => Date.parse(m[1]));
+      const withoutLastmod = (xml: string) =>
+        xml.replace(/<lastmod>[^<]+<\/lastmod>/g, '<lastmod/>');
+      expect(withoutLastmod(restored)).toBe(withoutLastmod(english));
+      expect(Math.min(...lastmods(restored))).toBeGreaterThanOrEqual(
+        Math.max(...lastmods(english)),
+      );
       const back = await request(app.getHttpServer())
         .get(`/public/websites/${academyId}`)
         .expect(200);
