@@ -42,6 +42,40 @@ describe('sanitizeDetails', () => {
   });
 });
 
+describe('desired domain (B5)', () => {
+  it.each(['myacademy.com', 'my-academy.com.eg', 'x.test', 'أكاديمية.مصر'])(
+    'accepts %s',
+    (desiredDomain) => {
+      expect(sanitizeDetails('domain', { desiredDomain })).toEqual({ desiredDomain });
+    },
+  );
+
+  it.each([
+    'my academy dot com',
+    'https://myacademy.com',
+    'myacademy',
+    '-bad.com',
+    'a.b',
+  ])('refuses %s on details.desiredDomain', (desiredDomain) => {
+    let caught: unknown;
+    try {
+      sanitizeDetails('domain', { desiredDomain });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(BadRequestException);
+    expect((caught as BadRequestException).getResponse()).toMatchObject({
+      messageKey: 'errors.customerRequest.invalidDomain',
+      violations: [
+        {
+          field: 'details.desiredDomain',
+          messageKey: 'errors.customerRequest.invalidDomain',
+        },
+      ],
+    });
+  });
+});
+
 describe('the team lifecycle', () => {
   it('never lets the team cancel (that is the customer’s decision)', () => {
     for (const targets of Object.values(TEAM_TRANSITIONS)) {

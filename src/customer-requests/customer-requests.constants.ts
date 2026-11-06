@@ -83,7 +83,18 @@ export interface DetailField {
   readonly key: string;
   readonly kind: 'text' | 'boolean';
   readonly maxLength?: number;
+  /** A shape the text must have, refused with `invalidKey` on that field. */
+  readonly pattern?: RegExp;
+  readonly invalidKey?: string;
 }
+
+/**
+ * B5 (UX audit) — a domain name: labels of letters (any script, so Arabic
+ * IDN domains pass), digits and inner hyphens, dot-separated, ending in a
+ * letters-only TLD. "my academy dot com" and "https://x.com" are refused.
+ */
+export const DOMAIN_NAME_PATTERN =
+  /^(?=.{4,253}$)(?:(?!-)[\p{L}\p{N}-]{1,63}(?<!-)\.)+\p{L}{2,63}$/u;
 
 export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
   Record<CustomerRequestType, readonly DetailField[]>
@@ -95,7 +106,13 @@ export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
     { key: 'references', kind: 'text', maxLength: 1000 },
   ],
   domain: [
-    { key: 'desiredDomain', kind: 'text', maxLength: 253 },
+    {
+      key: 'desiredDomain',
+      kind: 'text',
+      maxLength: 253,
+      pattern: DOMAIN_NAME_PATTERN,
+      invalidKey: 'errors.customerRequest.invalidDomain',
+    },
     { key: 'alreadyOwned', kind: 'boolean' },
     { key: 'registrar', kind: 'text', maxLength: 120 },
   ],
