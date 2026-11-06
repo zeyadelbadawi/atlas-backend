@@ -41,7 +41,7 @@ describe('Course Forum (e2e)', () => {
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -122,7 +122,9 @@ describe('Course Forum (e2e)', () => {
       .set('Authorization', `Bearer ${student.accessToken}`)
       .send({ title: '   ', body: '  \n ' })
       .expect(400);
-    const fields = blankThread.body.violations.map((v: { field: string }) => v.field);
+    const fields = blankThread.body.error.violations.map(
+      (v: { field: string }) => v.field,
+    );
     expect(fields).toEqual(expect.arrayContaining(['title', 'body']));
 
     const thread = await request(app.getHttpServer())
@@ -137,7 +139,7 @@ describe('Course Forum (e2e)', () => {
       .set('Authorization', `Bearer ${student.accessToken}`)
       .send({ body: '   ' })
       .expect(400);
-    expect(blankReply.body.violations[0].field).toBe('body');
+    expect(blankReply.body.error.violations[0].field).toBe('body');
 
     const detail = await request(app.getHttpServer())
       .get(`/courses/${course.id}/forum/threads/${thread.body.id}`)
