@@ -163,7 +163,7 @@ function decodeBase64Checked(payload: string, maxBytes?: number): Buffer {
   // for a file that decodes within the limit by more than a few bytes, so
   // the exact check below still runs on the decoded buffer.
   if (maxBytes !== undefined && maxDecodedBase64Bytes(payload.length) > maxBytes + 3) {
-    throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+    throw fileTooLarge(maxBytes);
   }
   const buffer = Buffer.from(payload, 'base64');
   if (buffer.length === 0) {
@@ -184,9 +184,19 @@ export function detectFileKind(buffer: Buffer): AllowedFileKind | undefined {
 }
 
 export function assertWithinSizeLimit(buffer: Buffer, maxBytes: number): void {
-  if (buffer.length > maxBytes) {
-    throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
-  }
+  if (buffer.length > maxBytes) throw fileTooLarge(maxBytes);
+}
+
+/**
+ * The 413 for a file over the limit, carrying the limit so the dashboard can
+ * say it ("That file is larger than 10 MB") instead of only "too large"
+ * (UX audit B3). The limit is configuration, not a secret.
+ */
+export function fileTooLarge(maxBytes: number): PayloadTooLargeException {
+  return new PayloadTooLargeException({
+    messageKey: 'errors.media.fileTooLarge',
+    details: { maxBytes },
+  });
 }
 
 /**
