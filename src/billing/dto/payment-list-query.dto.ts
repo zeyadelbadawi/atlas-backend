@@ -71,8 +71,10 @@ const PLATFORM_ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  *
  * `from`/`to` are calendar dates (`YYYY-MM-DD`), inclusive, in UTC, on the
  * payment's creation time. `search` matches the payment id (exact), the
- * provider reference, the method key/provider, and the organization name
- * (subscription list) or academy name / course title (course list).
+ * provider reference, the method key/provider, the payer reference on any
+ * of its proofs, and the checkout id (the transfer reference the customer
+ * is told to use) and organization name (subscription list) or academy
+ * name / course title / order id (course list).
  */
 export class PlatformPaymentListQueryDto extends PaymentListQueryDto {
   @IsOptional()

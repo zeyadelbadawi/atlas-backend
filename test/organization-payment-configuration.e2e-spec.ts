@@ -44,7 +44,8 @@ describe('Organization Payment Configuration (e2e)', () => {
   let flushRateLimitKeys: () => Promise<void>;
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    // Field violations as `main.ts` answers them (B8 tests read them).
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -336,6 +337,28 @@ describe('Organization Payment Configuration (e2e)', () => {
       .set('Authorization', `Bearer ${reviewer.accessToken}`)
       .send({ commissionMode: 'custom' })
       .expect(400);
+  });
+
+  it('B8 V29 — a custom commission outside 0–100% is refused on its field, with the range in percent', async () => {
+    const reviewer = await signUpAndSignIn(app, 't-custom-range-owner');
+    await makePlatformOwner(admin, reviewer.userId);
+    const { org } = await seedOrgWithOwner('t-custom-range');
+
+    // Basis points on the wire: -5% is -500, 150% is 15000, 12.345% is 1234.5.
+    for (const customPercentageBasisPoints of [-500, 15000, 1234.5, 'abc']) {
+      const res = await request(app.getHttpServer())
+        .patch(`/platform-commission/organizations/${org.id}`)
+        .set('Authorization', `Bearer ${reviewer.accessToken}`)
+        .send({ commissionMode: 'custom', customPercentageBasisPoints })
+        .expect(400);
+      expect(res.body.error.violations).toEqual([
+        {
+          field: 'customPercentageBasisPoints',
+          messageKey: 'errors.commission.percentageRange',
+          values: { min: 0, max: 100 },
+        },
+      ]);
+    }
   });
 
   // --- 15. Platform-Owner-only access where required ---

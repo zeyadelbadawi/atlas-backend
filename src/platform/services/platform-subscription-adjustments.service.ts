@@ -39,7 +39,13 @@
  * other way by changing the plan/period through a payment. Negative days
  * are refused by the DTO.
  */
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Plan, TenantSubscription } from '@prisma/client';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
@@ -149,10 +155,31 @@ export class PlatformSubscriptionAdjustmentsService {
       async (tx) => {
         const current = await this.lockAndRead(tx, organizationId);
         const plan = await tx.plan.findUnique({ where: { key: input.planKey } });
-        if (!plan) throw new NotFoundException({ messageKey: 'errors.notFound' });
+        if (!plan) {
+          // B8 (UX audit) V05 — a key that names no plan is a wrong value in
+          // the request body, answered on the field the form sends; the
+          // organization in the URL exists.
+          throw new BadRequestException({
+            messageKey: 'errors.validation.failed',
+            violations: [
+              {
+                field: 'planKey',
+                messageKey: 'errors.platform.subscriptionAdjustment.planNotFound',
+              },
+            ],
+          });
+        }
         if (plan.status === 'archived') {
+          // Still a 409 (the plan exists but is no longer offered); the
+          // violation names the field it belongs to.
           throw new ConflictException({
             messageKey: 'errors.platform.subscriptionAdjustment.planArchived',
+            violations: [
+              {
+                field: 'planKey',
+                messageKey: 'errors.platform.subscriptionAdjustment.planArchived',
+              },
+            ],
           });
         }
 

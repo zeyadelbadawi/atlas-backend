@@ -1,13 +1,21 @@
 /**
  * `TrialPolicy` contracts — matches `TrialPolicy` (`plan.types.ts`)
- * field-for-field. `UpdateTrialPolicyDto` mirrors the frontend's own
- * `updateTrialPolicySchema` (`tenant.schemas.ts`) exactly: `durationDays`
- * only needs to be a non-negative integer, `0` is legitimate regardless
- * of `enabled` — no business constraint invented beyond what the frontend
- * form itself enforces.
+ * field-for-field.
+ *
+ * B8 (UX audit) V23 — `durationDays` is a whole number from 1 to 365, the
+ * same range a plan's own `trialDurationDays` already had. `0` used to be
+ * accepted "regardless of `enabled`", and a stored 0 gave every new
+ * organization a trial that ended the moment it began (see
+ * `plans-catalog.e2e-spec.ts`'s note on the shared singleton); switching
+ * trials off is what `enabled: false` is for. There was no ceiling at all.
  */
-import { IsBoolean, IsInt, IsNotEmpty, Min } from 'class-validator';
+import { IsBoolean, IsNotEmpty } from 'class-validator';
 import type { TrialPolicy as PrismaTrialPolicy } from '@prisma/client';
+import { IsIntInRange } from '../../common/validation/violation-message';
+
+/** The trial length range, in days — the trial policy and a plan's own override. */
+export const TRIAL_DAYS_MIN = 1;
+export const TRIAL_DAYS_MAX = 365;
 
 export interface TrialPolicyResponse {
   readonly enabled: boolean;
@@ -31,7 +39,6 @@ export class UpdateTrialPolicyDto {
   readonly enabled!: boolean;
 
   @IsNotEmpty()
-  @IsInt()
-  @Min(0)
+  @IsIntInRange(TRIAL_DAYS_MIN, TRIAL_DAYS_MAX)
   readonly durationDays!: number;
 }

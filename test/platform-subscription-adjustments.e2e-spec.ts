@@ -116,7 +116,8 @@ describe('Platform subscription adjustments (e2e) — B0-BIL-06', () => {
     });
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    // Field violations as `main.ts` answers them (B8 tests read them).
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flush = testApp.flushRateLimitKeys;
@@ -162,23 +163,84 @@ describe('Platform subscription adjustments (e2e) — B0-BIL-06', () => {
     expect(await lastAudit(orgId, 'subscription.extended_by_platform')).toBeNull();
   });
 
-  it('requires a written reason and a day count between 1 and 365', async () => {
+  it('requires a written reason and a day count between 1 and 365, each named on its field', async () => {
     const { orgId } = await organization('bil06-validation', {
       status: 'active',
       end: new Date(Date.now() + 10 * DAY),
     });
-    await post(platformOwner.accessToken, `${orgId}/extend`, {
+    const reasonTooShort = {
+      field: 'reason',
+      messageKey: 'errors.platform.subscriptionAdjustment.reasonTooShort',
+      values: { count: 10 },
+    };
+    const daysRange = {
+      field: 'days',
+      messageKey: 'errors.platform.subscriptionAdjustment.daysRange',
+      values: { min: 1, max: 365 },
+    };
+    const short = await post(platformOwner.accessToken, `${orgId}/extend`, {
       days: 5,
       reason: 'short',
     }).expect(400);
-    await post(platformOwner.accessToken, `${orgId}/extend`, {
-      days: -5,
+    expect(short.body.error.violations).toEqual([reasonTooShort]);
+    // B8 (UX audit) V12 — ten spaces are not a reason.
+    const blank = await post(platformOwner.accessToken, `${orgId}/grant-days`, {
+      days: 5,
+      reason: ' '.repeat(12),
+    }).expect(400);
+    expect(blank.body.error.violations).toEqual([reasonTooShort]);
+    for (const days of [-5, 0, 2.5, 366, 'abc']) {
+      const res = await post(platformOwner.accessToken, `${orgId}/extend`, {
+        days,
+        reason: REASON,
+      }).expect(400);
+      expect(res.body.error.violations).toEqual([daysRange]);
+    }
+    expect(await lastAudit(orgId, 'subscription.extended_by_platform')).toBeNull();
+  });
+
+  it('B8 V05 — change plan: a missing plan, an unknown plan and an archived plan are each answered on planKey', async () => {
+    const { orgId } = await organization('bil06-change-field', {
+      status: 'active',
+      end: new Date(Date.now() + 10 * DAY),
+    });
+    const missing = await post(platformOwner.accessToken, `${orgId}/change-plan`, {
+      planKey: '',
+      applyAt: 'now',
       reason: REASON,
     }).expect(400);
-    await post(platformOwner.accessToken, `${orgId}/extend`, {
-      days: 366,
+    expect(missing.body.error.violations).toEqual([
+      {
+        field: 'planKey',
+        messageKey: 'errors.platform.subscriptionAdjustment.planRequired',
+      },
+    ]);
+    const unknown = await post(platformOwner.accessToken, `${orgId}/change-plan`, {
+      planKey: 'no-such-plan',
+      applyAt: 'now',
       reason: REASON,
     }).expect(400);
+    expect(unknown.body.error.violations).toEqual([
+      {
+        field: 'planKey',
+        messageKey: 'errors.platform.subscriptionAdjustment.planNotFound',
+      },
+    ]);
+    const archived = await post(platformOwner.accessToken, `${orgId}/change-plan`, {
+      planKey: archivedPlan.key,
+      applyAt: 'now',
+      reason: REASON,
+    }).expect(409);
+    expect(archived.body.error.violations).toEqual([
+      {
+        field: 'planKey',
+        messageKey: 'errors.platform.subscriptionAdjustment.planArchived',
+      },
+    ]);
+    const row = await admin.tenantSubscription.findUniqueOrThrow({
+      where: { organizationId: orgId },
+    });
+    expect(row.planId).toBe(plan.id);
   });
 
   it('extends a lapsed trial from now, audits it, and the sweep keeps it trialing', async () => {
@@ -329,10 +391,11 @@ describe('Platform subscription adjustments (e2e) — B0-BIL-06', () => {
     expect(archived.body.error.messageKey).toBe(
       'errors.platform.subscriptionAdjustment.planArchived',
     );
+    // B8 (UX audit) V05 — a key that names no plan is a field error (400).
     await post(platformOwner.accessToken, `${orgId}/change-plan`, {
       planKey: 'no-such-plan',
       applyAt: 'now',
       reason: REASON,
-    }).expect(404);
+    }).expect(400);
   });
 });

@@ -42,7 +42,8 @@ describe('Mobile wallets and InstaPay (e2e)', () => {
   let platform: { email: string; userId: string; token: string };
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    // Field violations as `main.ts` answers them (B8 tests read them).
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -244,6 +245,54 @@ describe('Mobile wallets and InstaPay (e2e)', () => {
           instructions: { instapayAddress: 'x@instapay', ...TEXTS },
         })
         .expect(403);
+    });
+
+    it('B8 V15 — each wrong format is answered on its field with the key that shows the expected format', async () => {
+      const bank = await as(platform.token)
+        .post('/platform-payment-methods/bank-transfer', {
+          displayName: 'Bank',
+          instructions: {
+            bankName: 'Atlas Bank',
+            accountNumber: '12#34',
+            iban: 'EG12',
+            swiftCode: 'NBE',
+            ...TEXTS,
+          },
+        })
+        .expect(400);
+      expect(bank.body.error.violations).toEqual(
+        expect.arrayContaining([
+          {
+            field: 'instructions.accountNumber',
+            messageKey: 'validation:invalidAccountNumber',
+          },
+          { field: 'instructions.iban', messageKey: 'validation:invalidIban' },
+          { field: 'instructions.swiftCode', messageKey: 'validation:invalidSwift' },
+        ]),
+      );
+      expect(bank.body.error.violations).toHaveLength(3);
+
+      const wallet = await createWallet({
+        displayName: 'Wallet',
+        instructions: { walletProvider: 'vodafone_cash', walletNumber: '0123', ...TEXTS },
+      }).expect(400);
+      expect(wallet.body.error.violations).toEqual([
+        {
+          field: 'instructions.walletNumber',
+          messageKey: 'validation:invalidWalletNumber',
+        },
+      ]);
+
+      const ipa = await createInstapay({
+        displayName: 'InstaPay',
+        instructions: { instapayAddress: 'ziad', ...TEXTS },
+      }).expect(400);
+      expect(ipa.body.error.violations).toEqual([
+        {
+          field: 'instructions.instapayAddress',
+          messageKey: 'validation:invalidInstapayAddress',
+        },
+      ]);
     });
 
     it("new details must be the method's own kind", async () => {

@@ -665,7 +665,9 @@ describe('Academy course orders (e2e)', () => {
   describe('Platform payment review lists', () => {
     let reviewer: { userId: string; accessToken: string };
     let subscriptionPaymentIds: string[];
+    let subscriptionCheckoutIds: string[];
     const orgName = `${marker}-payer-org`;
+    const payerReference = `NBE-${marker}-TRX`;
 
     beforeAll(async () => {
       reviewer = await signUpAndSignIn(app, 'acorders-reviewer');
@@ -676,6 +678,7 @@ describe('Academy course orders (e2e)', () => {
       await admin.organization.update({ where: { id: orgId }, data: { name: orgName } });
 
       subscriptionPaymentIds = [];
+      subscriptionCheckoutIds = [];
       const rows: [
         number,
         'pending' | 'succeeded',
@@ -734,9 +737,12 @@ describe('Academy course orders (e2e)', () => {
             storageKey: `${SECRET_STORAGE_KEY_PREFIX}${p.id}`,
             mimeType: 'image/png',
             note: SECRET_PROOF_NOTE,
+            // B8 (UX audit) V02 — only the second payment's proof carries one.
+            ...(amount === 10000 ? { payerReference } : {}),
           },
         });
         subscriptionPaymentIds.push(p.id);
+        subscriptionCheckoutIds.push(checkout.id);
       }
     });
 
@@ -811,6 +817,36 @@ describe('Academy course orders (e2e)', () => {
       expect(ids(byRef.body)).toEqual([c]);
       const byId = await platformList('/payments', { search: a }).expect(200);
       expect(ids(byId.body)).toEqual([a]);
+    });
+
+    it('B8 V02 — subscription list: searches by the checkout id the customer was told to use, the payer reference and the organization name, any case', async () => {
+      const [a, b, c] = subscriptionPaymentIds;
+      const [checkoutA] = subscriptionCheckoutIds;
+
+      const byCheckout = await platformList('/payments', { search: checkoutA }).expect(
+        200,
+      );
+      expect(ids(byCheckout.body)).toEqual([a]);
+      // Part of the id, upper-cased, as a bank's reference field often prints it.
+      const byPartialCheckout = await platformList('/payments', {
+        search: checkoutA.slice(0, 18).toUpperCase(),
+      }).expect(200);
+      expect(ids(byPartialCheckout.body)).toEqual([a]);
+
+      const byPayerReference = await platformList('/payments', {
+        search: payerReference.toLowerCase(),
+      }).expect(200);
+      expect(ids(byPayerReference.body)).toEqual([b]);
+
+      const byName = await platformList('/payments', {
+        search: orgName.toUpperCase(),
+        pageSize: 100,
+      }).expect(200);
+      expect(ids(byName.body)).toEqual([c, b, a]);
+
+      const detail = await platformList(`/payments/${b}`, {}).expect(200);
+      expect(detail.body.checkoutId).toBe(subscriptionCheckoutIds[1]);
+      expect(detail.body.proof.payerReference).toBe(payerReference);
     });
 
     it('platform lists refuse unknown sort fields and oversized pages', async () => {

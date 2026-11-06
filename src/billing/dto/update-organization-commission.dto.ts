@@ -5,7 +5,12 @@
  * `ValidateIf` AND re-checked in `CommissionService` (defense in depth,
  * matching this codebase's "never trust one layer alone" discipline).
  */
-import { IsIn, IsInt, Max, Min, ValidateIf } from 'class-validator';
+import { IsIn, ValidateIf } from 'class-validator';
+import {
+  COMMISSION_RANGE_MESSAGE_KEY,
+  COMMISSION_RANGE_PERCENT,
+} from './billing.constants';
+import { IsIntInRange } from '../../common/validation/violation-message';
 import type { OrganizationCommissionSettings } from '@prisma/client';
 
 const MODES: readonly OrganizationCommissionSettings['commissionMode'][] = [
@@ -19,8 +24,6 @@ export class UpdateOrganizationCommissionDto {
   readonly commissionMode!: OrganizationCommissionSettings['commissionMode'];
 
   @ValidateIf((dto: UpdateOrganizationCommissionDto) => dto.commissionMode === 'custom')
-  @IsInt()
-  @Min(0)
-  @Max(10000)
+  @IsIntInRange(0, 10000, COMMISSION_RANGE_MESSAGE_KEY, COMMISSION_RANGE_PERCENT)
   readonly customPercentageBasisPoints?: number;
 }

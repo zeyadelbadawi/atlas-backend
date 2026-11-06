@@ -5,11 +5,13 @@
  * configured (matches `AtlasCommissionConfigRepository.setDefault`'s own
  * doc comment); this document does not invent an "unset" product flow.
  */
-import { IsInt, Max, Min } from 'class-validator';
+import {
+  COMMISSION_RANGE_MESSAGE_KEY,
+  COMMISSION_RANGE_PERCENT,
+} from './billing.constants';
+import { IsIntInRange } from '../../common/validation/violation-message';
 
 export class UpdateAtlasCommissionConfigDto {
-  @IsInt()
-  @Min(0)
-  @Max(10000)
+  @IsIntInRange(0, 10000, COMMISSION_RANGE_MESSAGE_KEY, COMMISSION_RANGE_PERCENT)
   readonly defaultCommissionBasisPoints!: number;
 }

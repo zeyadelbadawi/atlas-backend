@@ -97,6 +97,28 @@ function violationForConstraint(
 }
 
 /**
+ * B8 (UX audit) — a constraint may name its own violation through
+ * class-validator's standard `context` option (`{ context: { messageKey,
+ * values } }`, see `violation-message.ts`). A custom `message` alone never
+ * reached the client: the key it names was replaced by the constraint's
+ * generic key above, and the threshold it hid was lost with it — so an
+ * IBAN came back as "unexpected format" without the format, and a range as
+ * a bare "must be at least" without the number. Opt-in: a constraint
+ * without a `context.messageKey` is mapped exactly as before.
+ */
+interface ViolationContext {
+  readonly messageKey: string;
+  readonly values?: Record<string, string | number>;
+}
+
+function contextViolation(field: string, context: unknown): FieldViolation | undefined {
+  if (!context || typeof context !== 'object') return undefined;
+  const { messageKey, values } = context as Partial<ViolationContext>;
+  if (typeof messageKey !== 'string' || messageKey.length === 0) return undefined;
+  return values ? { field, messageKey, values } : { field, messageKey };
+}
+
+/**
  * Flattens `class-validator`'s `ValidationError[]` (including nested
  * `children`, dot-joined into the parent's property path — the same
  * `.`-joined convention `zodIssuesToViolations` already uses) into real,
@@ -116,7 +138,18 @@ export function classValidatorErrorsToViolations(
     const field = parentPath ? `${parentPath}.${error.property}` : error.property;
 
     if (error.constraints) {
+      // Several constraints sharing one named violation (a range is
+      // `IsInt` + `Min` + `Max`) report it once, so the field gets one
+      // message instead of three.
+      const named = new Set<string>();
       for (const [constraintKey, defaultMessage] of Object.entries(error.constraints)) {
+        const fromContext = contextViolation(field, error.contexts?.[constraintKey]);
+        if (fromContext) {
+          if (named.has(fromContext.messageKey)) continue;
+          named.add(fromContext.messageKey);
+          violations.push(fromContext);
+          continue;
+        }
         violations.push(violationForConstraint(field, constraintKey, defaultMessage));
       }
     }

@@ -70,6 +70,7 @@ export function toPaymentProofResponse(
     fileUrl: `/organizations/${organizationId}/payments/${proof.paymentId}/proof/file`,
     mimeType: proof.mimeType,
     note: proof.note ?? undefined,
+    payerReference: proof.payerReference ?? undefined,
     uploadedAt: proof.uploadedAt.toISOString(),
   };
 }

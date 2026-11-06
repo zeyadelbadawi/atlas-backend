@@ -73,7 +73,8 @@ describe('P57 platform plan administration (e2e) — P57-PLAN-001..019', () => {
   const createdPlanKeys: string[] = [];
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
+    // Field violations as `main.ts` answers them (B8 tests read them).
+    const testApp = await createTestApp({ fieldViolations: true });
     app = testApp.app;
     admin = createAdminPrisma();
     flushRateLimitKeys = testApp.flushRateLimitKeys;
@@ -539,5 +540,175 @@ describe('P57 platform plan administration (e2e) — P57-PLAN-001..019', () => {
     const after = await admin.plan.findUnique({ where: { key: plan.key } });
     expect(after?.limits).toEqual(before?.limits);
     expect(after?.version).toBe(before?.version);
+  });
+
+  // ---------------- B8 (UX audit): one named violation per field ----------------
+
+  type Violation = {
+    field: string;
+    messageKey: string;
+    values?: Record<string, unknown>;
+  };
+  const violationsOf = (body: { error: { violations?: Violation[] } }) =>
+    body.error.violations ?? [];
+
+  async function patchPlan(
+    key: string,
+    payload: Record<string, unknown>,
+    status: number,
+  ): Promise<request.Response> {
+    const current = await admin.plan.findUniqueOrThrow({ where: { key } });
+    return request(app.getHttpServer())
+      .patch(`/platform-plans/${key}`)
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({ expectedVersion: current.version, ...payload })
+      .expect(status);
+  }
+
+  it('B8 V04 — a price that is negative, zero, fractional, absurd or not a number is refused on pricing.amount, with the range', async () => {
+    const plan = await createPlan();
+    for (const amount of [-500, 0, 1190.5, 99_999_999_999, 'abc', null]) {
+      const res = await patchPlan(
+        plan.key,
+        {
+          pricing: { amount, currency: 'EGP', billingCycle: 'monthly' },
+        },
+        400,
+      );
+      expect(violationsOf(res.body)).toEqual([
+        {
+          field: 'pricing.amount',
+          messageKey: 'validation:integerRange',
+          values: { min: 1, max: 1_000_000 },
+        },
+      ]);
+    }
+    const after = await admin.plan.findUniqueOrThrow({ where: { key: plan.key } });
+    expect((after.pricing as { amount: number }).amount).toBe(10);
+  });
+
+  it('B8 V09 — a yearly price below the monthly price is refused on pricing.yearlyAmount, naming the monthly price', async () => {
+    const plan = await createPlan();
+    const res = await patchPlan(
+      plan.key,
+      {
+        pricing: {
+          amount: 1190,
+          currency: 'EGP',
+          billingCycle: 'monthly',
+          yearlyAmount: 1000,
+        },
+      },
+      400,
+    );
+    expect(violationsOf(res.body)).toEqual([
+      {
+        field: 'pricing.yearlyAmount',
+        messageKey: 'errors.plan.yearlyBelowMonthly',
+        values: { min: 1190 },
+      },
+    ]);
+
+    const tooBig = await patchPlan(
+      plan.key,
+      {
+        pricing: {
+          amount: 1190,
+          currency: 'EGP',
+          billingCycle: 'monthly',
+          yearlyAmount: 10_000_001,
+        },
+      },
+      400,
+    );
+    expect(violationsOf(tooBig.body)).toEqual([
+      {
+        field: 'pricing.yearlyAmount',
+        messageKey: 'validation:integerRange',
+        values: { min: 1, max: 10_000_000 },
+      },
+    ]);
+
+    await patchPlan(
+      plan.key,
+      {
+        pricing: {
+          amount: 1190,
+          currency: 'EGP',
+          billingCycle: 'monthly',
+          yearlyAmount: 1190,
+        },
+      },
+      200,
+    );
+  });
+
+  it('B8 V09 — a plan trial outside 1..365 whole days is refused on trialDurationDays; null keeps the default', async () => {
+    const plan = await createPlan();
+    for (const trialDurationDays of [-3, 0, 2.5, 1000, 'abc']) {
+      const res = await patchPlan(plan.key, { trialDurationDays }, 400);
+      expect(violationsOf(res.body)).toEqual([
+        {
+          field: 'trialDurationDays',
+          messageKey: 'validation:integerRange',
+          values: { min: 1, max: 365 },
+        },
+      ]);
+    }
+    await patchPlan(plan.key, { trialDurationDays: null }, 200);
+    await patchPlan(plan.key, { trialDurationDays: 365 }, 200);
+  });
+
+  it('B8 V10 — a limit below 0 or not whole is refused on limits.<key>, naming the minimum; "unlimited" is the only no-limit value', async () => {
+    const plan = await createPlan();
+    const res = await patchPlan(
+      plan.key,
+      {
+        limits: { ...LIMITS, courses: -1, students: 2.5, academies: 'unlimited' },
+      },
+      400,
+    );
+    expect(violationsOf(res.body)).toEqual(
+      expect.arrayContaining([
+        {
+          field: 'limits.courses',
+          messageKey: 'errors.plan.limitValue',
+          values: { min: 0 },
+        },
+        {
+          field: 'limits.students',
+          messageKey: 'errors.plan.limitValue',
+          values: { min: 0 },
+        },
+      ]),
+    );
+    expect(violationsOf(res.body)).toHaveLength(2);
+
+    const missing = await patchPlan(
+      plan.key,
+      {
+        limits: { ...LIMITS, staff: undefined, notARealLimit: 5 },
+      },
+      400,
+    );
+    expect(violationsOf(missing.body)).toEqual(
+      expect.arrayContaining([
+        { field: 'limits.staff', messageKey: 'validation:required' },
+        { field: 'limits.notARealLimit', messageKey: 'validation:invalid' },
+      ]),
+    );
+
+    const preview = await request(app.getHttpServer())
+      .post(`/platform-plans/${plan.key}/limits/preview`)
+      .set('Authorization', `Bearer ${platformOwnerToken}`)
+      .send({ limits: { ...LIMITS, courses: -1 } })
+      .expect(400);
+    expect(violationsOf(preview.body)).toEqual([
+      {
+        field: 'limits.courses',
+        messageKey: 'errors.plan.limitValue',
+        values: { min: 0 },
+      },
+    ]);
   });
 });
