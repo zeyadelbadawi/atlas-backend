@@ -58,7 +58,7 @@ export function sanitizeDetails(
       });
     }
     const trimmed = value.trim();
-    if (trimmed && field.pattern && !field.pattern.test(trimmed)) {
+    if (trimmed && field.validate && !field.validate(trimmed)) {
       const messageKey = field.invalidKey ?? 'errors.customerRequest.invalidDetails';
       throw new BadRequestException({
         messageKey,

@@ -1,3 +1,4 @@
+import { domainToASCII } from 'node:url';
 /**
  * Customer Requests — the vocabulary every layer shares.
  *
@@ -83,18 +84,31 @@ export interface DetailField {
   readonly key: string;
   readonly kind: 'text' | 'boolean';
   readonly maxLength?: number;
-  /** A shape the text must have, refused with `invalidKey` on that field. */
-  readonly pattern?: RegExp;
+  /** A check the text must pass, refused with `invalidKey` on that field. */
+  readonly validate?: (value: string) => boolean;
   readonly invalidKey?: string;
 }
 
+const ASCII_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/i;
+const ASCII_TLD = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/i;
+
 /**
- * B5 (UX audit) — a domain name: labels of letters (any script, so Arabic
- * IDN domains pass), digits and inner hyphens, dot-separated, ending in a
- * letters-only TLD. "my academy dot com" and "https://x.com" are refused.
+ * B5 (UX audit) — a domain name, in any script. "my academy dot com" and
+ * "https://x.com" used to be saved as-is. The name is encoded with the
+ * IDNA rules (Node's `domainToASCII`, which also applies the rules for
+ * combining marks, so उदाहरण.भारत and أكاديمية.مصر pass) and the DNS limits
+ * are checked on the encoded form: labels of 1–63 characters, at most 253
+ * in all, a letters (or punycode) TLD. The submitted spelling is stored.
  */
-export const DOMAIN_NAME_PATTERN =
-  /^(?=.{4,253}$)(?:(?!-)[\p{L}\p{N}-]{1,63}(?<!-)\.)+\p{L}{2,63}$/u;
+export function isDomainName(value: string): boolean {
+  if (/[\s/:@]/.test(value)) return false;
+  const ascii = domainToASCII(value);
+  if (!ascii || ascii.length > 253) return false;
+  const labels = ascii.split('.');
+  if (labels.length < 2) return false;
+  const tld = labels[labels.length - 1];
+  return labels.every((label) => ASCII_LABEL.test(label)) && ASCII_TLD.test(tld);
+}
 
 export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
   Record<CustomerRequestType, readonly DetailField[]>
@@ -110,7 +124,7 @@ export const CUSTOMER_REQUEST_DETAIL_FIELDS: Readonly<
       key: 'desiredDomain',
       kind: 'text',
       maxLength: 253,
-      pattern: DOMAIN_NAME_PATTERN,
+      validate: isDomainName,
       invalidKey: 'errors.customerRequest.invalidDomain',
     },
     { key: 'alreadyOwned', kind: 'boolean' },

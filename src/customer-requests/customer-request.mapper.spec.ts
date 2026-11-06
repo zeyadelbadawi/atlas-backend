@@ -43,12 +43,15 @@ describe('sanitizeDetails', () => {
 });
 
 describe('desired domain (B5)', () => {
-  it.each(['myacademy.com', 'my-academy.com.eg', 'x.test', 'أكاديمية.مصر'])(
-    'accepts %s',
-    (desiredDomain) => {
-      expect(sanitizeDetails('domain', { desiredDomain })).toEqual({ desiredDomain });
-    },
-  );
+  it.each([
+    'myacademy.com',
+    'my-academy.com.eg',
+    'x.test',
+    'أكاديمية.مصر',
+    'उदाहरण.भारत',
+  ])('accepts %s', (desiredDomain) => {
+    expect(sanitizeDetails('domain', { desiredDomain })).toEqual({ desiredDomain });
+  });
 
   it.each([
     'my academy dot com',
@@ -56,6 +59,9 @@ describe('desired domain (B5)', () => {
     'myacademy',
     '-bad.com',
     'a.b',
+    '\u0301a.com',
+    `${'a'.repeat(64)}.com`,
+    `${'أكاديمية.'.repeat(20)}com`, // 183 characters, over 253 once encoded
   ])('refuses %s on details.desiredDomain', (desiredDomain) => {
     let caught: unknown;
     try {
