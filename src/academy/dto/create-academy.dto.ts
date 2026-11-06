@@ -30,6 +30,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { ACADEMY_CONTACT_PHONE_REGEX } from './academy-contact.constants';
 
 // Matches `atlas frontend/src/features/academy/schemas/academy.schemas.ts`'s `SLUG_REGEX`.
 export const ACADEMY_SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -70,6 +71,7 @@ export class CreateAcademyDto {
 
   @IsOptional()
   @IsString()
+  @Matches(ACADEMY_CONTACT_PHONE_REGEX)
   readonly contactPhone?: string;
 
   @IsOptional()
