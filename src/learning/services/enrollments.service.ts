@@ -365,8 +365,13 @@ export class EnrollmentsService {
     // The whole sequence from the first moment, so a quiz-only course's
     // card reads "0 of 2" rather than "0 of 0" before the first recompute.
     const [publishedQuizzes, publishedAssignments] = await Promise.all([
-      tx.quiz.count({ where: { courseId: course.id, status: 'published' } }),
-      tx.assignment.count({ where: { courseId: course.id, status: 'published' } }),
+      // Items in a unit only — the same set completion counts (B7 V15).
+      tx.quiz.count({
+        where: { courseId: course.id, status: 'published', sectionId: { not: null } },
+      }),
+      tx.assignment.count({
+        where: { courseId: course.id, status: 'published', sectionId: { not: null } },
+      }),
     ]);
 
     await this.courseProgressRepository.createCourseProgress(tx, {

@@ -127,8 +127,16 @@ describe('Course item progress (e2e)', () => {
       visibility: 'public',
       pricingType: 'free',
     });
-    if (lessons > 0) {
-      const section = await seedCourseSection(admin, course.id, 'Section', 0);
+    // Every item sits in a unit: an item outside every unit is not part of
+    // the course a learner can open, and doesn't count (B7 V15). Quizzes get
+    // their own unit FIRST, so the sequential lock never holds them behind
+    // the lessons (these tests pass quizzes in any order); an optional quiz
+    // doesn't lock the lessons after it.
+    const quizSection =
+      quizzes > 0 ? await seedCourseSection(admin, course.id, 'Quizzes', 0) : null;
+    const section =
+      lessons > 0 ? await seedCourseSection(admin, course.id, 'Section', 1) : null;
+    if (lessons > 0 && section) {
       for (let i = 0; i < lessons; i += 1) {
         await seedCourseLesson(admin, section.id, course.id, `Lesson ${i + 1}`, i, {
           status: 'published',
@@ -141,6 +149,7 @@ describe('Course item progress (e2e)', () => {
       const quiz = await seedQuiz(admin, course.id, `${label} quiz ${i + 1}`, {
         status: 'published',
         passingScore: 50,
+        sectionId: quizSection?.id,
       });
       const question = await seedQuizQuestion(admin, quiz.id, '2+2?', 'single_choice', 0);
       const correct = await seedQuizQuestionOption(admin, question.id, '4', true);
@@ -280,6 +289,57 @@ describe('Course item progress (e2e)', () => {
     enrollment = await myEnrollment(student.token, course.id);
     expect(enrollment.progress).toMatchObject({ totalItems: 3, completedItems: 1 });
     expect(enrollment.progress!.completionState).not.toBe('completed');
+  });
+
+  it('B7 V15 — a published quiz outside every unit is not counted and does not block completion', async () => {
+    const { course, student } = await seedCourseWith('items-detached', 1, 0);
+    // Published, required, but in no unit: the curriculum and the player
+    // never show it, so the learner could never open it.
+    const detached = await seedQuiz(admin, course.id, 'Detached quiz', {
+      status: 'published',
+    });
+    await admin.quiz.update({
+      where: { id: detached.id },
+      data: { requiredForCompletion: true },
+    });
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: course.id },
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    const enrollment = await myEnrollment(student.token, course.id);
+    expect(enrollment.progress).toMatchObject({ totalItems: 1, completedItems: 1 });
+    expect(enrollment.progress!.completionState).toBe('completed');
+  });
+
+  it('B7 V15 — detaching an unfinished required quiz completes the course on the next completion read', async () => {
+    const { course, quizzes, student } = await seedCourseWith('items-detach-later', 1, 1);
+    await admin.quiz.update({
+      where: { id: quizzes[0].id },
+      data: { requiredForCompletion: true },
+    });
+    const firstLesson = await admin.courseLesson.findFirstOrThrow({
+      where: { courseId: course.id },
+    });
+    await post(student.token, `/courses/${course.id}/progress/complete-lesson`, {
+      lessonId: firstLesson.id,
+    }).expect(201);
+    const before = await get(
+      student.token,
+      `/learning/courses/${course.id}/completion`,
+    ).expect(200);
+    expect(before.body.completed).toBe(false);
+
+    // The author detaches the quiz the learner never took.
+    await admin.quiz.update({ where: { id: quizzes[0].id }, data: { sectionId: null } });
+
+    const after = await get(
+      student.token,
+      `/learning/courses/${course.id}/completion`,
+    ).expect(200);
+    expect(after.body.completed).toBe(true);
+    expect(after.body.completionState).toBe('completed');
   });
 
   it('a lesson published after enrollment updates the item counts, not just the lesson counts', async () => {
