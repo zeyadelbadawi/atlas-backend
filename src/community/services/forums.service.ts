@@ -309,4 +309,37 @@ export class ForumsService {
   ): Promise<ForumThreadResponse> {
     return this.setThreadFlags(userId, courseId, threadId, { locked: false });
   }
+
+  /**
+   * B6 (UX audit) V05 — a moderator removes a thread (and its replies).
+   * Same people who may pin and lock; RLS (`forum_threads_moderate_delete`)
+   * enforces it too.
+   */
+  async deleteThread(userId: string, courseId: string, threadId: string): Promise<void> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await this.assertModerator(tx, userId, courseId);
+      await this.assertThreadInCourse(tx, courseId, threadId);
+      const deleted = await this.forumsRepository.deleteThread(tx, threadId);
+      if (deleted === 0) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    });
+  }
+
+  /** B6 (UX audit) V05 — a moderator removes one reply. */
+  async deleteReply(
+    userId: string,
+    courseId: string,
+    threadId: string,
+    replyId: string,
+  ): Promise<void> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      await this.assertModerator(tx, userId, courseId);
+      await this.assertThreadInCourse(tx, courseId, threadId);
+      const reply = await this.forumsRepository.findReplyById(tx, replyId);
+      if (!reply || reply.threadId !== threadId) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const deleted = await this.forumsRepository.deleteReply(tx, replyId);
+      if (deleted === 0) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    });
+  }
 }

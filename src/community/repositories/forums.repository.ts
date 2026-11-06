@@ -102,4 +102,25 @@ export class ForumsRepository {
       include: { author: { select: { name: true } } },
     });
   }
+
+  /** B6 (UX audit) V05 — RLS lets only a course moderator delete. Replies go with the thread (ON DELETE CASCADE). */
+  async deleteThread(tx: Prisma.TransactionClient, id: string): Promise<number> {
+    const { count } = await tx.forumThread.deleteMany({ where: { id } });
+    return count;
+  }
+
+  findReplyById(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ id: string; threadId: string } | null> {
+    return tx.forumReply.findUnique({
+      where: { id },
+      select: { id: true, threadId: true },
+    });
+  }
+
+  async deleteReply(tx: Prisma.TransactionClient, id: string): Promise<number> {
+    const { count } = await tx.forumReply.deleteMany({ where: { id } });
+    return count;
+  }
 }

@@ -190,6 +190,64 @@ describe('Course Forum (e2e)', () => {
     expect(locked.body.locked).toBe(true);
   });
 
+  it('B6 V05 — a moderator can delete a reply and a thread; a student cannot', async () => {
+    const { instructor, student, course } =
+      await seedCourseWithParticipants('forum-delete');
+    const server = app.getHttpServer();
+
+    const thread = await request(server)
+      .post(`/courses/${course.id}/forum/threads`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ title: 'To be removed', body: 'x' })
+      .expect(201);
+    const reply = await request(server)
+      .post(`/courses/${course.id}/forum/threads/${thread.body.id}/replies`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ body: 'Abusive reply' })
+      .expect(201);
+
+    // The author is a plain participant: not allowed, even on their own post.
+    await request(server)
+      .delete(
+        `/courses/${course.id}/forum/threads/${thread.body.id}/replies/${reply.body.id}`,
+      )
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .expect(403);
+    await request(server)
+      .delete(`/courses/${course.id}/forum/threads/${thread.body.id}`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .expect(403);
+
+    await request(server)
+      .delete(
+        `/courses/${course.id}/forum/threads/${thread.body.id}/replies/${reply.body.id}`,
+      )
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(204);
+    const afterReply = await request(server)
+      .get(`/courses/${course.id}/forum/threads/${thread.body.id}`)
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(afterReply.body.replyCount).toBe(0);
+
+    // Deleting it again, or a reply id from nowhere: 404, not a silent 204.
+    await request(server)
+      .delete(
+        `/courses/${course.id}/forum/threads/${thread.body.id}/replies/${reply.body.id}`,
+      )
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(404);
+
+    await request(server)
+      .delete(`/courses/${course.id}/forum/threads/${thread.body.id}`)
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(204);
+    await request(server)
+      .get(`/courses/${course.id}/forum/threads/${thread.body.id}`)
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(404);
+  });
+
   it('replying to a locked thread is rejected', async () => {
     const { instructor, student, course } =
       await seedCourseWithParticipants('forum-locked');

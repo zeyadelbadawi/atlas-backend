@@ -6,7 +6,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -155,6 +158,42 @@ export class ForumsController {
       request.authContext!.userId,
       courseId,
       threadId,
+    );
+  }
+
+  @Delete(':id/forum/threads/:threadId')
+  // B6 (UX audit) V05 — moderators only (same as pin/lock); never from an
+  // academy-website session.
+  @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteThread(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('threadId') threadId: string,
+  ): Promise<void> {
+    await this.forumsService.deleteThread(
+      request.authContext!.userId,
+      courseId,
+      threadId,
+    );
+  }
+
+  @Delete(':id/forum/threads/:threadId/replies/:replyId')
+  @UseGuards(ManagementSurfaceGuard)
+  @SubscriptionScope({ kind: 'course', param: 'id' })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteReply(
+    @Req() request: Request,
+    @Param('id') courseId: string,
+    @Param('threadId') threadId: string,
+    @Param('replyId') replyId: string,
+  ): Promise<void> {
+    await this.forumsService.deleteReply(
+      request.authContext!.userId,
+      courseId,
+      threadId,
+      replyId,
     );
   }
 }
