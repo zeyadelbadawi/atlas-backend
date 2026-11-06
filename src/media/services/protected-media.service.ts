@@ -32,7 +32,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +49,7 @@ import { AcademyOriginsService } from '../video/academy-origins.service';
 import {
   decodeBase64Upload,
   detectFileKind,
+  fileTooLarge,
   sanitizeFileName,
 } from '../utils/file-validation.util';
 import { parseMp4Duration } from './video-duration.util';
@@ -339,7 +339,7 @@ export class ProtectedMediaService {
         throw new BadRequestException({ messageKey: 'errors.validation.failed' });
       }
       if (declaredBytes > this.config.maxVideoUploadBytes) {
-        throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+        throw fileTooLarge(this.config.maxVideoUploadBytes);
       }
     }
 
@@ -763,7 +763,7 @@ export class ProtectedMediaService {
 
     if (storedBytes > allowedBytes) {
       await discard();
-      throw new PayloadTooLargeException({ messageKey: 'errors.media.fileTooLarge' });
+      throw fileTooLarge(allowedBytes);
     }
     const extraBytes = storedBytes - reservedBytes;
     if (extraBytes > 0) {
