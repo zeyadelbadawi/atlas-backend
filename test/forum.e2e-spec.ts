@@ -114,6 +114,38 @@ describe('Course Forum (e2e)', () => {
     expect(forumAfter.body.threadCount).toBe(1);
   });
 
+  it('B6 V04 — a thread or reply of only spaces is refused on its field, not saved blank', async () => {
+    const { student, course } = await seedCourseWithParticipants('forum-blank');
+
+    const blankThread = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/forum/threads`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ title: '   ', body: '  \n ' })
+      .expect(400);
+    const fields = blankThread.body.violations.map((v: { field: string }) => v.field);
+    expect(fields).toEqual(expect.arrayContaining(['title', 'body']));
+
+    const thread = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/forum/threads`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ title: '  Trimmed title  ', body: 'Real body' })
+      .expect(201);
+    expect(thread.body.title).toBe('Trimmed title');
+
+    const blankReply = await request(app.getHttpServer())
+      .post(`/courses/${course.id}/forum/threads/${thread.body.id}/replies`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .send({ body: '   ' })
+      .expect(400);
+    expect(blankReply.body.violations[0].field).toBe('body');
+
+    const detail = await request(app.getHttpServer())
+      .get(`/courses/${course.id}/forum/threads/${thread.body.id}`)
+      .set('Authorization', `Bearer ${student.accessToken}`)
+      .expect(200);
+    expect(detail.body.replyCount).toBe(0);
+  });
+
   it('someone with no real relationship to the course cannot see or post to its forum', async () => {
     const { course } = await seedCourseWithParticipants('forum-denied');
     const outsider = await signUpAndSignIn(app, 'forum-denied-outsider');

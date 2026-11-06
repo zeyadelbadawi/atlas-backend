@@ -40,9 +40,14 @@ export class InstructorRepository {
   findCoursesByIds(
     tx: Prisma.TransactionClient,
     courseIds: readonly string[],
-    options: { skip: number; take: number },
+    options: { skip: number; take: number; search?: string },
   ): Promise<{ items: Course[]; totalItems: number }> {
-    const where: Prisma.CourseWhereInput = { id: { in: [...courseIds] } };
+    const search = options.search?.trim();
+    const where: Prisma.CourseWhereInput = {
+      id: { in: [...courseIds] },
+      // B6 (UX audit) V01 — the client sends `search`; it was ignored.
+      ...(search ? { title: { contains: search, mode: 'insensitive' } } : {}),
+    };
     return Promise.all([
       tx.course.findMany({
         where,
@@ -106,11 +111,23 @@ export class InstructorRepository {
   async findEnrolledStudents(
     tx: Prisma.TransactionClient,
     courseId: string,
-    options: { skip: number; take: number },
+    options: { skip: number; take: number; search?: string },
   ): Promise<{ items: EnrollmentWithStudent[]; totalItems: number }> {
+    const search = options.search?.trim();
     const where: Prisma.EnrollmentWhereInput = {
       courseId,
       status: { in: ['enrolled', 'completed'] },
+      // B6 (UX audit) V01 — by the student's name or email.
+      ...(search
+        ? {
+            student: {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { email: { contains: search, mode: 'insensitive' } },
+              ],
+            },
+          }
+        : {}),
     };
     const [items, totalItems] = await Promise.all([
       tx.enrollment.findMany({

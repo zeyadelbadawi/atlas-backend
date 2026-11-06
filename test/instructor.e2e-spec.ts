@@ -179,6 +179,39 @@ describe('Instructor Operations (e2e)', () => {
     expect(roster.body.items[0].studentId).toBe(student.userId);
   });
 
+  it('B6 V01 — the teaching-course list and the roster honour `search`', async () => {
+    const { instructor, course } = await seedTeachingFixture('instr-search');
+
+    const hit = await request(app.getHttpServer())
+      .get('/instructor/courses')
+      .query({ search: course.title.slice(0, 12).toUpperCase() })
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(hit.body.items.map((c: { courseId: string }) => c.courseId)).toContain(
+      course.id,
+    );
+    const miss = await request(app.getHttpServer())
+      .get('/instructor/courses')
+      .query({ search: 'zzzz-no-such-course' })
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(miss.body.items).toHaveLength(0);
+    expect(miss.body.pagination.totalItems).toBe(0);
+
+    const student = await request(app.getHttpServer())
+      .get(`/instructor/courses/${course.id}/students`)
+      .query({ search: 'instr-search-STUDENT' })
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(student.body.items).toHaveLength(1);
+    const nobody = await request(app.getHttpServer())
+      .get(`/instructor/courses/${course.id}/students`)
+      .query({ search: 'zzzz' })
+      .set('Authorization', `Bearer ${instructor.accessToken}`)
+      .expect(200);
+    expect(nobody.body.items).toHaveLength(0);
+  });
+
   it('an instructor not assigned to the course gets 404 for the roster, not the real data', async () => {
     const { course } = await seedTeachingFixture('instr-roster-denied');
     const outsider = await signUpAndSignIn(app, 'instr-roster-denied-outsider');

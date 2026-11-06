@@ -280,7 +280,7 @@ export class InstructorService {
       const { items, totalItems } = await this.instructorRepository.findCoursesByIds(
         tx,
         courseIds,
-        { skip, take },
+        { skip, take, search: query?.search },
       );
 
       const responses = await Promise.all(
@@ -364,7 +364,7 @@ export class InstructorService {
       const { items, totalItems } = await this.instructorRepository.findEnrolledStudents(
         tx,
         courseId,
-        { skip, take },
+        { skip, take, search: query?.search },
       );
       return {
         items: items.map(toEnrollmentStudentResponse),

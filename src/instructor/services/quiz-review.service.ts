@@ -226,7 +226,7 @@ export class QuizReviewService {
         const manual: Record<string, number> = {
           ...(this.engine.manualGradesOf(attempt) ?? {}),
         };
-        for (const grade of dto.grades) {
+        for (const [index, grade] of dto.grades.entries()) {
           if (!essayIds.has(grade.questionId)) {
             throw new BadRequestException({
               messageKey: 'errors.quiz.notManuallyGradable',
@@ -234,9 +234,18 @@ export class QuizReviewService {
           }
           const max = pointsById.get(grade.questionId) ?? 0;
           if (grade.points > max) {
+            // B6 (UX audit) V13 — on the field, with the question's own cap,
+            // the same path a DTO violation on that grade uses.
             throw new BadRequestException({
               messageKey: 'errors.quiz.pointsExceedMaximum',
               details: { max },
+              violations: [
+                {
+                  field: `grades.${index}.points`,
+                  messageKey: 'errors.quiz.pointsExceedMaximum',
+                  values: { max },
+                },
+              ],
             });
           }
           manual[grade.questionId] = grade.points;
