@@ -492,7 +492,8 @@ export class LearnerDashboardService {
       where: {
         studentId: userId,
         submittedAt: { not: null },
-        quiz: { courseId: { in: [...courseIds] } },
+        // Only items still in a unit, like every other learner list (B7 V15).
+        quiz: { courseId: { in: [...courseIds] }, sectionId: { not: null } },
       },
       select: {
         id: true,
@@ -528,7 +529,7 @@ export class LearnerDashboardService {
       where: {
         studentId: userId,
         gradingStatus: 'graded',
-        assignment: { courseId: { in: [...courseIds] } },
+        assignment: { courseId: { in: [...courseIds] }, sectionId: { not: null } },
       },
       select: {
         id: true,
