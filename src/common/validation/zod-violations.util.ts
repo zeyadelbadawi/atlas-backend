@@ -26,11 +26,30 @@ import { BadRequestException } from '@nestjs/common';
 import type { ZodError, ZodIssue } from 'zod';
 import type { FieldViolation } from '../dto/api-error.dto';
 
+/**
+ * The numbers a message needs. `validation:maxLength` reads "{{field}} must
+ * be {{count}} characters or fewer"; without `count` the dashboard showed
+ * the placeholder itself ("En must be {{count}} characters or fewer" — UX
+ * audit B2).
+ */
+function issueValues(issue: ZodIssue): Record<string, number> | undefined {
+  if (issue.code === 'too_big' || issue.code === 'too_small') {
+    const limit = issue.code === 'too_big' ? issue.maximum : issue.minimum;
+    const count = typeof limit === 'bigint' ? Number(limit) : limit;
+    return Number.isFinite(count) ? { count } : undefined;
+  }
+  return undefined;
+}
+
 export function zodIssuesToViolations(issues: readonly ZodIssue[]): FieldViolation[] {
-  return issues.map((issue) => ({
-    field: issue.path.length > 0 ? issue.path.join('.') : 'root',
-    messageKey: issue.message,
-  }));
+  return issues.map((issue) => {
+    const values = issueValues(issue);
+    return {
+      field: issue.path.length > 0 ? issue.path.join('.') : 'root',
+      messageKey: issue.message,
+      ...(values ? { values } : {}),
+    };
+  });
 }
 
 /** Throws a `BadRequestException` shaped exactly like every other explicit validation failure in this codebase. */

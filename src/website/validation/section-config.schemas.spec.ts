@@ -626,9 +626,22 @@ describe('content limits — violation payload', () => {
     expect(response).toEqual({
       messageKey: 'errors.validation.failed',
       violations: [
-        { field: '0.config.title.en', messageKey: 'validation:maxLength' },
-        { field: '0.config.cta.label.ar', messageKey: 'validation:maxLength' },
-        { field: '1.config.items.0.title.ar', messageKey: 'validation:maxLength' },
+        // With the limit, so the message can say it (UX audit B2).
+        {
+          field: '0.config.title.en',
+          messageKey: 'validation:maxLength',
+          values: { count: MAX_HERO_TITLE_LENGTH },
+        },
+        {
+          field: '0.config.cta.label.ar',
+          messageKey: 'validation:maxLength',
+          values: { count: MAX_CTA_LABEL_LENGTH },
+        },
+        {
+          field: '1.config.items.0.title.ar',
+          messageKey: 'validation:maxLength',
+          values: { count: MAX_STEP_TITLE_LENGTH },
+        },
       ],
     });
   });
