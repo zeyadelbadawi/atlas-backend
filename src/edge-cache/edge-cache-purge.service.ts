@@ -65,6 +65,7 @@ export class EdgeCachePurgeService implements OnModuleDestroy {
   private flushTimer: NodeJS.Timeout | null = null;
   private lastRequestAt = 0;
   private flushing: Promise<void> | null = null;
+  private readonly academyChangeListeners: Array<(academyId: string) => void> = [];
 
   constructor(
     configService: ConfigService,
@@ -84,9 +85,31 @@ export class EdgeCachePurgeService implements OnModuleDestroy {
     return !!(this.token && this.zoneId);
   }
 
+  /**
+   * SEO/AEO/GEO pass — called with the Academy's id whenever
+   * `purgeAcademy` is (what its public website shows has changed), whether
+   * or not the edge purge itself is configured. Registered rather than
+   * injected (IndexNow lives in the public website module, which depends on
+   * this one). A listener must not throw; one that does is logged.
+   */
+  onAcademyChanged(listener: (academyId: string) => void): void {
+    this.academyChangeListeners.push(listener);
+  }
+
   /** Every edge copy of this Academy's pages, on every host. */
   purgeAcademy(academyId: string | null | undefined): void {
-    if (academyId) this.enqueue([academyEdgeTag(academyId)]);
+    if (!academyId) return;
+    for (const listener of this.academyChangeListeners) {
+      try {
+        listener(academyId);
+      } catch (error) {
+        this.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'An academy-change listener failed; the purge goes ahead.',
+        );
+      }
+    }
+    this.enqueue([academyEdgeTag(academyId)]);
   }
 
   /** Every edge copy of the pages served on these hosts. */

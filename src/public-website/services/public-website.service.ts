@@ -42,6 +42,7 @@ import {
 } from '../../website/dto/website-page.contract';
 import { PublicHostnameResolutionRepository } from '../repositories/public-hostname-resolution.repository';
 import { faviconVersion, parseFavicon, type FaviconSource } from '../utils/favicon.util';
+import type { LlmsNavigationItem, LlmsPage, LlmsTxtInput } from '../utils/llms-txt.util';
 import { PublicWebsiteCacheService } from './public-website-cache.service';
 import {
   extractSubdomainLabel,
@@ -246,6 +247,59 @@ export class PublicWebsiteService {
   }
 
   /**
+   * SEO/AEO/GEO pass — the one host this Academy's website advertises (its
+   * connected, reachable custom domain, else its Atlas subdomain), the same
+   * rule the hostname lookup and outgoing links use; `null` when it has
+   * none or must not be served. IndexNow submits that host's URLs.
+   */
+  async getCanonicalHost(academyId: string): Promise<string | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+    const [rows, baseDomain] = await Promise.all([
+      this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+        Promise.all([
+          tx.subdomainAllocation.findUnique({ where: { academyId } }),
+          tx.domainConnection.findUnique({ where: { academyId } }),
+        ]),
+      ),
+      this.baseDomainNow(),
+    ]);
+    const [allocation, connection] = rows;
+    return (
+      resolveCanonicalHost({
+        connectedCustomHostname:
+          connection?.status === 'connected' ? connection.hostname : null,
+        customHttpsReachable: connection?.httpsReachable,
+        subdomainFullHost: allocation?.fullHost,
+        subdomainLabel: allocation?.subdomain,
+        baseDomain,
+      })?.host ?? null
+    );
+  }
+
+  /**
+   * SEO/AEO/GEO pass — what the generated share card and monogram are drawn
+   * from (`BrandImagesService`): the Academy's name and its public brand
+   * colour (the hostname lookup's `presentation`, which the public site
+   * hashes into the image URL). Gated like the favicon: `null` for an
+   * Academy whose site must not be served.
+   */
+  async getBrandImageSubject(
+    academyId: string,
+  ): Promise<{ readonly name: string; readonly primaryColor?: string } | null> {
+    const organizationId = await this.resolveOrganizationId(academyId);
+    if (!organizationId) return null;
+    const [academy, presentation] = await Promise.all([
+      this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
+        this.academiesRepository.findById(tx, academyId),
+      ),
+      this.findPresentation(academyId),
+    ]);
+    if (!academy) return null;
+    return { name: academy.name, primaryColor: presentation?.brand.primaryColor };
+  }
+
+  /**
    * `GET public/websites/:academyId/favicon` — the Academy's own favicon,
    * gated exactly like the identity read (an Academy whose site must not be
    * served has none here either). `null` when there is nothing to serve.
@@ -386,24 +440,87 @@ export class PublicWebsiteService {
     readonly defaultLocale?: PublicWebsiteLocale;
   }> {
     const closed = { indexable: false, sitemapEnabled: false, urls: [] };
-    const resolved = await this.resolveHostname(host);
-    if (!resolved) return closed;
-    const configuration = await this.getPublishedWebsite(resolved.academyId);
-    if (!configuration) return closed;
-
-    const seo = (configuration.seo ?? {}) as Record<string, unknown>;
-    const indexable = seo.robotsIndexable !== false;
-    const sitemapEnabled = indexable && seo.sitemapEnabled !== false;
-    const origin = `https://${resolved.canonicalHost ?? normalizeHostname(host)}`;
-    const defaultLocale = resolveDefaultLocale(configuration.defaultLocale);
+    const site = await this.findIndexableSite(host);
+    if (!site) return closed;
+    const { indexable, sitemapEnabled, origin, defaultLocale, configuration } = site;
     if (!sitemapEnabled) {
       return { indexable, sitemapEnabled, origin, urls: [], defaultLocale };
     }
 
-    const pages = (await this.getPublishedPages(resolved.academyId)) ?? [];
+    const pages = (await this.getPublishedPages(site.academyId)) ?? [];
+    const courses = await this.listAllPublicCourses(site.academyId);
+    return {
+      indexable,
+      sitemapEnabled,
+      origin,
+      urls: buildSitemapUrls(pages, courses, configuration.publishedAt),
+      defaultLocale,
+    };
+  }
+
+  /**
+   * SEO/AEO/GEO pass — the input of the host's `/llms.txt` and
+   * `/llms-full.txt` (`llms-txt.util.ts`): published pages, published public
+   * courses and the public identity, or `null` when the host's site is not
+   * published or its owner turned search engines off (then neither file is
+   * served — the same gate as the sitemap's `indexable`).
+   */
+  async getLlmsTxtInput(host: string): Promise<LlmsTxtInput | null> {
+    const site = await this.findIndexableSite(host);
+    if (!site || !site.indexable) return null;
+    const [pages, courses, identity] = await Promise.all([
+      this.getPublishedPages(site.academyId),
+      this.listAllPublicCourses(site.academyId),
+      this.getPublicIdentity(site.academyId),
+    ]);
+    const seo = (site.configuration.seo ?? {}) as Record<string, unknown>;
+    return {
+      origin: site.origin,
+      academyName: identity?.name ?? site.academyName,
+      academyDescription: identity?.description,
+      contactEmail: identity?.contactEmail,
+      contactPhone: identity?.contactPhone,
+      defaultLocale: site.defaultLocale,
+      pages: (pages ?? []) as readonly LlmsPage[],
+      courses,
+      navigation: (site.configuration.navigation ?? []) as readonly LlmsNavigationItem[],
+      siteDescription: seo.metaDescription as LlmsTxtInput['siteDescription'],
+      sitemapEnabled: site.sitemapEnabled,
+    };
+  }
+
+  /** The host's published site and its search-engine settings, or `null` (unknown host, not serving, unpublished). */
+  private async findIndexableSite(host: string): Promise<{
+    readonly academyId: string;
+    readonly academyName: string;
+    readonly indexable: boolean;
+    readonly sitemapEnabled: boolean;
+    readonly origin: string;
+    readonly defaultLocale: PublicWebsiteLocale;
+    readonly configuration: WebsiteConfigurationResponse;
+  } | null> {
+    const resolved = await this.resolveHostname(host);
+    if (!resolved) return null;
+    const configuration = await this.getPublishedWebsite(resolved.academyId);
+    if (!configuration) return null;
+    const seo = (configuration.seo ?? {}) as Record<string, unknown>;
+    const indexable = seo.robotsIndexable !== false;
+    return {
+      academyId: resolved.academyId,
+      academyName: resolved.academyName,
+      indexable,
+      sitemapEnabled: indexable && seo.sitemapEnabled !== false,
+      origin: `https://${resolved.canonicalHost ?? normalizeHostname(host)}`,
+      defaultLocale: resolveDefaultLocale(configuration.defaultLocale),
+      configuration,
+    };
+  }
+
+  /** Every published public course, up to the sitemap's bound. */
+  private async listAllPublicCourses(academyId: string): Promise<CourseResponse[]> {
     const courses: CourseResponse[] = [];
     for (let page = 1; page <= SITEMAP_MAX_COURSE_PAGES; page += 1) {
-      const result = await this.getPublicCourses(resolved.academyId, {
+      const result = await this.getPublicCourses(academyId, {
         page,
         pageSize: MAX_PAGE_SIZE,
       } as CourseListQueryDto);
@@ -411,13 +528,7 @@ export class PublicWebsiteService {
       courses.push(...result.items);
       if (result.items.length < MAX_PAGE_SIZE) break;
     }
-    return {
-      indexable,
-      sitemapEnabled,
-      origin,
-      urls: buildSitemapUrls(pages, courses),
-      defaultLocale,
-    };
+    return courses;
   }
 
   async getPublishedWebsite(

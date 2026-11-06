@@ -33,6 +33,10 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { buildRobotsTxt, buildSitemapXml } from '../utils/seo-files.util';
+import { buildLlmsFullTxt, buildLlmsTxt } from '../utils/llms-txt.util';
+import { parseMonogramSize } from '../utils/brand-images.util';
+import { BrandImagesService } from '../services/brand-images.service';
+import { IndexNowService } from '../services/index-now.service';
 import { Throttle } from '@nestjs/throttler';
 import { clientIpPrefixTracker } from '../../common/security/client-ip-throttler.guard';
 import { EmailLogoService } from '../../communications/services/email-logo.service';
@@ -76,6 +80,8 @@ export class PublicWebsiteController implements OnModuleInit {
   constructor(
     private readonly publicWebsiteService: PublicWebsiteService,
     private readonly emailLogoService: EmailLogoService,
+    private readonly brandImagesService: BrandImagesService,
+    private readonly indexNowService: IndexNowService,
   ) {}
 
   /**
@@ -107,6 +113,7 @@ export class PublicWebsiteController implements OnModuleInit {
       indexable: files.indexable,
       sitemapUrl:
         files.sitemapEnabled && files.origin ? `${files.origin}/sitemap.xml` : undefined,
+      llmsTxtUrl: files.origin ? `${files.origin}/llms.txt` : undefined,
     });
     response.setHeader('Content-Type', 'text/plain; charset=utf-8');
     response.setHeader('Cache-Control', 'public, max-age=300');
@@ -127,6 +134,55 @@ export class PublicWebsiteController implements OnModuleInit {
     response
       .status(200)
       .send(buildSitemapXml(files.urls, files.origin, files.defaultLocale));
+  }
+
+  /**
+   * SEO/AEO/GEO pass — the Academy's own `/llms.txt` and `/llms-full.txt`
+   * (`llms-txt.util.ts`): what the site is and where its pages and courses
+   * are, for AI assistants and answer engines. Caddy sends both paths on
+   * academy hosts here. Published and indexable sites only (the same gate
+   * as the sitemap); anything else is a 404.
+   */
+  @Get('host/llms.txt')
+  async getHostLlmsTxt(
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const input = await this.publicWebsiteService.getLlmsTxtInput(requestHost(request));
+    if (!input) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.status(200).send(buildLlmsTxt(input));
+  }
+
+  @Get('host/llms-full.txt')
+  async getHostLlmsFullTxt(
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const input = await this.publicWebsiteService.getLlmsTxtInput(requestHost(request));
+    if (!input) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.status(200).send(buildLlmsFullTxt(input));
+  }
+
+  /**
+   * SEO/AEO/GEO pass — the Academy's IndexNow key file (`IndexNowService`):
+   * the engines fetch it to confirm a submission came from the site's
+   * owner. Published, indexable sites only; 404 otherwise or with IndexNow
+   * off.
+   */
+  @Get('host/indexnow-key.txt')
+  async getHostIndexNowKey(
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const key = await this.indexNowService.keyFileFor(requestHost(request));
+    if (!key) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.status(200).send(key);
   }
 
   @Get('resolve')
@@ -198,6 +254,66 @@ export class PublicWebsiteController implements OnModuleInit {
     response.setHeader('Content-Type', favicon.source.contentType);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.status(200).end(favicon.source.bytes);
+  }
+
+  /**
+   * SEO/AEO/GEO pass — the Academy's generated share card (1200×630 PNG,
+   * its name on its brand colour; `BrandImagesService`): the `og:image` of
+   * every page whose owner set none. `?v=` matching the current name and
+   * colour → immutable for a year; anything else → 5 minutes. 404 for an
+   * Academy whose site must not be served.
+   */
+  @Get(':academyId/og-image.png')
+  async getOgImage(
+    @Param('academyId') academyId: string,
+    @Query('v') version: string | undefined,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!UUID_PATTERN.test(academyId)) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    const subject = await this.publicWebsiteService.getBrandImageSubject(academyId);
+    if (!subject) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    const image = await this.brandImagesService.renderCard(academyId, subject);
+    this.sendBrandImage(response, image.png, version === image.version);
+  }
+
+  /**
+   * SEO/AEO/GEO pass — the Academy's generated monogram (a square PNG of
+   * the first letter of its name on its brand colour): the
+   * `apple-touch-icon`, and the favicon of an Academy that uploaded none.
+   * `size` is one of 48, 96, 180, 192, 512 (default 180). Caching as the
+   * share card.
+   */
+  @Get(':academyId/icon.png')
+  async getMonogramIcon(
+    @Param('academyId') academyId: string,
+    @Query('size') sizeParam: string | undefined,
+    @Query('v') version: string | undefined,
+    @Res() response: Response,
+  ): Promise<void> {
+    const size = parseMonogramSize(sizeParam);
+    if (!UUID_PATTERN.test(academyId) || !size) {
+      throw new NotFoundException({ messageKey: 'errors.notFound' });
+    }
+    const subject = await this.publicWebsiteService.getBrandImageSubject(academyId);
+    if (!subject) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    const image = await this.brandImagesService.renderMonogram(academyId, subject, size);
+    this.sendBrandImage(response, image.png, version === image.version);
+  }
+
+  private sendBrandImage(response: Response, png: Buffer, current: boolean): void {
+    response.setHeader(
+      'Cache-Control',
+      current ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
+    );
+    response.setHeader('Content-Type', 'image/png');
+    response.setHeader('Content-Length', String(png.length));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    // Social networks and chat apps fetch the share card from their own
+    // origins (as webmail fetches the email logo).
+    response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    response.status(200).end(png);
   }
 
   /**

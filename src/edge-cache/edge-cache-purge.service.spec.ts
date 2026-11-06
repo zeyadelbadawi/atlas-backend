@@ -63,6 +63,18 @@ describe('EdgeCachePurgeService', () => {
     delete global.fetch;
   });
 
+  it('tells academy-change listeners about every purgeAcademy, even with purging off, and survives a throwing one', () => {
+    const { service } = build({ token: '' });
+    const seen: string[] = [];
+    service.onAcademyChanged(() => {
+      throw new Error('listener bug');
+    });
+    service.onAcademyChanged((id) => seen.push(id));
+    service.purgeAcademy(ACADEMY);
+    service.purgeAcademy(null);
+    expect(seen).toEqual([ACADEMY]);
+  });
+
   it('purges an Academy by its tag after a short delay, with the purge token', async () => {
     const { service, calls } = build();
     service.purgeAcademy(ACADEMY);

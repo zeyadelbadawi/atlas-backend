@@ -60,6 +60,12 @@ const canonicalPathSchema = z
   .optional()
   .or(z.literal(''));
 
+const siteVerificationToken = z
+  .string()
+  .max(128, 'validation:maxLength')
+  .regex(/^[A-Za-z0-9_-]*$/, 'validation:invalid')
+  .optional();
+
 /** Phase 6 — every title/description a search engine or social-share preview displays is `LocalizedText`: `/about` and `/ar/about` are two distinct indexed URLs (see `seo-resolution.util.ts`'s hreflang-alternate resolution), each needing its own language's copy, not one string served for both. */
 export const pageSeoSchema = z.object({
   metaTitle: localizedOptional(MAX_SEO_TITLE_LENGTH).optional(),
@@ -82,6 +88,14 @@ export const globalSeoSchema = z.object({
     .string()
     .max(MAX_CANONICAL_PATH_LENGTH, 'validation:maxLength')
     .optional(),
+  /**
+   * SEO/AEO/GEO pass — the `content` of Google Search Console's
+   * `google-site-verification` and Bing Webmaster Tools' `msvalidate.01`
+   * meta tags (the HTML-tag ownership check), rendered on the home page.
+   * Tokens only (letters, digits, `-`, `_`): never markup. Empty clears it.
+   */
+  googleSiteVerification: siteVerificationToken,
+  bingSiteVerification: siteVerificationToken,
 });
 
 const hslColor = z.string().regex(HSL_TRIPLET_REGEX, 'validation:invalidColor');

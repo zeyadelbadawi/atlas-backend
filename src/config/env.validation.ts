@@ -837,6 +837,11 @@ const EnvSchema = z.object({
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
   // A purge-only token for the zone (edge-cached Academy website pages).
   CLOUDFLARE_CACHE_PURGE_TOKEN: z.string().min(1).optional(),
+  // SEO/AEO/GEO pass — IndexNow submissions of changed Academy website URLs
+  // (on unless `off`); the per-Academy key is derived from this secret, or
+  // from JWT_ACCESS_SECRET when it is unset.
+  INDEXNOW: z.enum(['on', 'off']).optional(),
+  INDEXNOW_KEY_SECRET: z.string().min(16).optional(),
 
   // --- Phase P12 — Atlas Subscription Billing (master plan §5.7, §12,
   // §16, §21 P12) ---

@@ -62,6 +62,8 @@ export interface WebsitePageSeoInput {
 
 export interface WebsitePageInput {
   readonly slug: string;
+  /** A core page's type (`home`, `about`, ...); its public path is `/` for Home, `/<coreType>` otherwise. Absent for a custom page. */
+  readonly coreType?: string | null;
   readonly visible: boolean;
   readonly seo: WebsitePageSeoInput;
 }

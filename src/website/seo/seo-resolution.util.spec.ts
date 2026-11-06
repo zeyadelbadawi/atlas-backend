@@ -158,6 +158,18 @@ describe('resolvePageSeo — precedence hierarchy', () => {
     expect(result.canonicalPath).toBe('/about');
   });
 
+  it('canonicalPath of a core page is its public path: Home is `/` (never `/home`), its Arabic twin `/ar`', () => {
+    const home = { slug: 'home', coreType: 'home', visible: true, seo: {} };
+    const result = resolvePageSeo(home, config(), fallback, 'en');
+    expect(result.canonicalPath).toBe('/');
+    expect(result.hreflangAlternates).toEqual([
+      { locale: 'en', path: '/' },
+      { locale: 'ar', path: '/ar' },
+    ]);
+    const faqs = { slug: 'faq-page', coreType: 'faqs', visible: true, seo: {} };
+    expect(resolvePageSeo(faqs, config(), fallback, 'en').canonicalPath).toBe('/faqs');
+  });
+
   it('canonicalPath uses the explicit override when set', () => {
     const result = resolvePageSeo(
       { ...page(), seo: { ...page().seo, canonicalPath: '/custom-path' } },
