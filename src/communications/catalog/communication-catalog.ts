@@ -104,6 +104,14 @@ export interface CommunicationCatalogEntry {
    * Absent = the email is never too old to send.
    */
   readonly emailStaleAfterSeconds?: number;
+  /**
+   * The email is only true while the row's academy exists: when it has
+   * been deleted (archived — Atlas's delete) or is gone by the time the
+   * row is dispatched, the email is settled as suppressed
+   * (`academy_archived`). Matters for an email held to a later instant
+   * (`EmitInput.notBefore`), such as "your academy is ready".
+   */
+  readonly requiresLiveAcademy?: boolean;
   /** Which language wins when the person has not chosen one. */
   readonly locale: 'user' | 'academy' | 'platform';
   /** Which brand and host the email renders under. */
@@ -304,6 +312,10 @@ const CATALOG = {
     retentionClass: 'standard',
     dedupe: ({ entity }) => `provisioning_completed:${entity.id}`,
     cooldownSeconds: 0,
+    // Held until the owner's build screen reaches 100 % (see the
+    // orchestrator's `notBefore`); an academy deleted meanwhile is not
+    // announced as ready.
+    requiresLiveAcademy: true,
     locale: 'user',
     // Staff work happens on the MANAGEMENT host: `/dashboard/*` is not
     // mounted on an academy host at all, so an academy-branded CTA here

@@ -24,13 +24,19 @@ export class CommunicationsProducer {
    * find it, so a Redis hiccup here must not fail the business request
    * that already succeeded.
    */
-  async enqueueDispatch(outboxId: string, attempts = 0): Promise<boolean> {
+  async enqueueDispatch(outboxId: string, attempts = 0, delayMs = 0): Promise<boolean> {
     try {
       await this.queue.add(
         COMMUNICATION_JOB_DISPATCH,
         { outboxId },
         {
+          // One job id per outbox row and attempt: a repeated hint (a
+          // retried emit, a sweep) for the same row never queues twice.
           jobId: dispatchJobId(outboxId, attempts),
+          // A row held to a later `available_at` (see `EmitInput.notBefore`)
+          // is woken then; BullMQ keeps a delayed job in Redis across a
+          // worker restart, and the sweep covers a lost one.
+          ...(delayMs > 0 ? { delay: delayMs } : {}),
           attempts: COMMUNICATION_DISPATCH_ATTEMPTS,
           backoff: { type: 'exponential', delay: COMMUNICATION_DISPATCH_BACKOFF_MS },
           removeOnComplete: true,

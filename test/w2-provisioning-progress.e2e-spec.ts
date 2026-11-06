@@ -599,4 +599,44 @@ describe('W2 — provisioning progress, branding and resilience (e2e)', () => {
       .get(`/organizations/${org.id}/provisioning-requests/${created.body.id}`)
       .expect(401);
   });
+
+  it('W2-10: "your academy is ready" is held until the build screen reaches 100 % (presentedReadyAt)', async () => {
+    const { owner, org } = await arrangeOrg('w2-ready-email');
+    // Driven in-process (not through the shared queue), so this build's
+    // orchestrator is guaranteed to be the code that runs.
+    const seeded = await seedRequest(org.id, owner.userId);
+    const before = await getStatus(owner.accessToken, org.id, seeded.id);
+    // The server owns the presented window: 45–75 s after the request.
+    const createdAt = Date.parse(before.createdAt);
+    const readyAt = Date.parse(before.presentedReadyAt);
+    expect(readyAt - createdAt).toBeGreaterThanOrEqual(45_000);
+    expect(readyAt - createdAt).toBeLessThanOrEqual(75_000);
+
+    await orchestrator.runToCompletion(seeded.id, org.id);
+    const ready = await waitForReady(owner.accessToken, org.id, seeded.id);
+    expect(ready.status).toBe('ready');
+    expect(ready.presentedReadyAt).toBe(before.presentedReadyAt);
+    // The real work beat the window, so the email waits for it: written
+    // (with its in-app twin), but not dispatchable before presentedReadyAt.
+    expect(Date.parse(ready.completedAt)).toBeLessThan(readyAt);
+    const outbox = await admin.communicationOutbox.findMany({
+      where: {
+        key: 'provisioning.completed',
+        entityType: 'provisioning_request',
+        entityId: seeded.id,
+      },
+    });
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].recipientUserId).toBe(owner.userId);
+    expect(outbox[0].state).toBe('pending');
+    expect(outbox[0].availableAt.getTime()).toBe(readyAt);
+
+    // A second run (a redelivered job) writes nothing new.
+    await orchestrator.runToCompletion(seeded.id, org.id);
+    expect(
+      await admin.communicationOutbox.count({
+        where: { key: 'provisioning.completed', entityId: seeded.id },
+      }),
+    ).toBe(1);
+  });
 });
