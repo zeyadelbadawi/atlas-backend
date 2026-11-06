@@ -36,7 +36,13 @@ const IP_KEY = /(^ip$|ipaddress|ip_address|remoteaddr|clientip)/i;
 
 // Deliberately broad: anything with an @ between word-ish runs and a dotted
 // domain. A false positive costs a masked label; a false negative leaks PII.
-const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+//
+// The lookbehind makes a match start only where a run of local-part
+// characters starts. Without it the engine retried from EVERY position
+// inside a long run with no `@` — quadratic: an 80 KB base64 string took
+// ~3 s, and a 4 MB course thumbnail saved as a data URL held the event loop
+// at 100 % for minutes, so the API stopped answering everyone (UX audit B3).
+const EMAIL_PATTERN = /(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
 /** Context strings are short diagnostics, never documents. */
 const MAX_CONTEXT_STRING_LENGTH = 300;
