@@ -13,7 +13,9 @@
  * - its key is a catalog key (`PLAN_CATALOG_KEYS`);
  * - it was created through the console (a `plan.created` audit entry
  *   names it);
- * - an organization subscribed to it has ever had a payment;
+ * - an organization subscribed to it has ever had a payment, or a payment
+ *   was made through a checkout for it (even if the organization has since
+ *   moved to another plan);
  * - a Founding Academy membership is locked to it.
  *
  * Only a plan with none of those is a fixture and is removed.
@@ -26,7 +28,7 @@ export interface PlanCleanupCandidate {
 export interface PlanCleanupEvidence {
   /** `targetId` of every `plan.created` audit entry. */
   readonly consoleCreatedPlanIds: ReadonlySet<string>;
-  /** Plans with a subscription whose organization has a payment row. */
+  /** Plans an organization on them has paid for, or that a paid checkout names. */
   readonly planIdsWithPayments: ReadonlySet<string>;
   /** Plans a Founding Academy membership points at. */
   readonly planIdsWithFoundingMemberships: ReadonlySet<string>;

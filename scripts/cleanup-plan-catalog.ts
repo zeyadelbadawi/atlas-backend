@@ -77,10 +77,20 @@ async function main(): Promise<void> {
       where: { action: 'plan.created', targetType: 'plan' },
       select: { targetId: true },
     });
+    // A plan is "paid for" when an organization on it has ever paid, or
+    // when a payment was made through a checkout for it (that catches a
+    // plan the organization has since left). A payment with no linked
+    // checkout names no plan, so it can only count through the first rule.
     const paid = await prisma.$queryRaw<{ plan_id: string }[]>`
       SELECT DISTINCT ts.plan_id
       FROM tenant_subscriptions ts
-      WHERE EXISTS (SELECT 1 FROM payments p WHERE p.organization_id = ts.organization_id)`;
+      WHERE EXISTS (SELECT 1 FROM payments p WHERE p.organization_id = ts.organization_id)
+      UNION
+      SELECT DISTINCT pl.id
+      FROM payments p
+      JOIN checkouts c ON c.id = p.checkout_id
+      JOIN plans pl ON pl.key = c.target_key
+      WHERE c.target_type = 'plan_subscription'`;
     const founding = await prisma.foundingMembership.findMany({
       select: { planId: true },
       distinct: ['planId'],

@@ -195,10 +195,13 @@ export class PlatformPlansService {
     }[] = [
       {
         where: CUSTOMER_FACING_WHERE,
-        orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+        orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
       },
-      { where: { status: 'active', displayOrder: 0 }, orderBy: [{ name: 'asc' }] },
-      { where: { status: 'archived' }, orderBy: [{ name: 'asc' }] },
+      {
+        where: { status: 'active', displayOrder: 0 },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      },
+      { where: { status: 'archived' }, orderBy: [{ name: 'asc' }, { id: 'asc' }] },
     ];
     const groups =
       query.visibility === undefined
