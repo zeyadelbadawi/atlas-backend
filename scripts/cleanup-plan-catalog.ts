@@ -1,8 +1,8 @@
 /**
- * One-off (but safely re-runnable) maintenance script — reduces the
- * shared `plans` catalog to exactly the real, production plans the
- * catalog defines (`src/plans/utils/plan-catalog.util.ts`), removing
- * every e2e-test-fixture row.
+ * One-off (but safely re-runnable) maintenance script — removes e2e
+ * test-fixture rows from the shared `plans` catalog, keeping the
+ * catalog-defined plans (`src/plans/utils/plan-catalog.util.ts`) and every
+ * plan that is real for another reason (see "Background" below).
  *
  * P64 Phase 2 (D10): that catalog is now SIX variants, not three —
  * `starter`/`growth`/`enterprise` (Normal) plus `premium-starter`/
@@ -12,14 +12,14 @@
  * the catalog would not merely be stale, it would DELETE real plans and
  * every subscription referencing them.
  *
- * Background (checkout/plans investigation): `plans` has NO write
- * endpoint at all — the only two ways a `Plan` row is ever created are
- * `prisma/seed.ts`'s `seedPlansAndSubscriptions` (upserts exactly the
- * catalog's real plans, by their stable `key`) and raw test fixtures
- * (`test/utils/db-admin.ts`'s `seedPlan`, and a handful of e2e specs'
- * own direct `admin.plan.create(...)` calls). This means ANY plan whose
- * `key` is not one of the real ones is, with total certainty, a test
- * fixture — never ambiguous, never a real customer's configuration.
+ * A plan is NOT necessarily a fixture just because its key is not a
+ * catalog key: since the Platform Owner console gained "New plan"
+ * (`POST /platform-plans`), real plans can have any key. Deleting one
+ * would delete its customers' subscriptions with it. So a plan is kept
+ * when it is a catalog plan, was created through the console (a
+ * `plan.created` audit entry names it), belongs to an organization that
+ * has ever paid, or holds a Founding Academy lock
+ * (`src/plans/utils/plan-cleanup.util.ts`). Only the rest are fixtures.
  *
  * `PlansRepository`'s `CUSTOMER_FACING_WHERE` filter (the code fix this
  * script accompanies) already keeps every such fixture out of `GET
@@ -49,34 +49,68 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { PLAN_CATALOG_KEYS } from '../src/plans/utils/plan-catalog.util';
+import { selectRemovablePlans } from '../src/plans/utils/plan-cleanup.util';
 
 const REAL_PLAN_KEYS: readonly string[] = PLAN_CATALOG_KEYS;
 
 function requireAdminDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
   if (!url) {
-    throw new Error('DATABASE_URL must be set (the same superuser connection Prisma migrations use).');
+    throw new Error(
+      'DATABASE_URL must be set (the same superuser connection Prisma migrations use).',
+    );
   }
   return url;
 }
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
-  const prisma = new PrismaClient({ datasources: { db: { url: requireAdminDatabaseUrl() } } });
+  const prisma = new PrismaClient({
+    datasources: { db: { url: requireAdminDatabaseUrl() } },
+  });
 
   try {
     const before = await prisma.plan.count();
-    const toRemove = await prisma.plan.findMany({
-      where: { key: { notIn: [...REAL_PLAN_KEYS] } },
-      select: { id: true, key: true },
+    const plans = await prisma.plan.findMany({ select: { id: true, key: true } });
+
+    const created = await prisma.auditLogEntry.findMany({
+      where: { action: 'plan.created', targetType: 'plan' },
+      select: { targetId: true },
+    });
+    // A plan is "paid for" when an organization on it has ever paid, or
+    // when a payment was made through a checkout for it (that catches a
+    // plan the organization has since left). A payment with no linked
+    // checkout names no plan, so it can only count through the first rule.
+    const paid = await prisma.$queryRaw<{ plan_id: string }[]>`
+      SELECT DISTINCT ts.plan_id
+      FROM tenant_subscriptions ts
+      WHERE EXISTS (SELECT 1 FROM payments p WHERE p.organization_id = ts.organization_id)
+      UNION
+      SELECT DISTINCT pl.id
+      FROM payments p
+      JOIN checkouts c ON c.id = p.checkout_id
+      JOIN plans pl ON pl.key = c.target_key
+      WHERE c.target_type = 'plan_subscription'`;
+    const founding = await prisma.foundingMembership.findMany({
+      select: { planId: true },
+      distinct: ['planId'],
+    });
+
+    const { remove: toRemove, keep } = selectRemovablePlans(plans, REAL_PLAN_KEYS, {
+      consoleCreatedPlanIds: new Set(created.map((row) => row.targetId)),
+      planIdsWithPayments: new Set(paid.map((row) => row.plan_id)),
+      planIdsWithFoundingMemberships: new Set(founding.map((row) => row.planId)),
     });
 
     console.log(`Plans in catalog: ${before}`);
-    console.log(`Real, kept plans: ${REAL_PLAN_KEYS.join(', ')}`);
+    console.log(`Catalog plans: ${REAL_PLAN_KEYS.join(', ')}`);
+    for (const { plan, reason } of keep) {
+      if (reason !== 'catalog') console.log(`Kept (${reason}): ${plan.key}`);
+    }
     console.log(`Fixture plans to remove: ${toRemove.length}`);
 
     if (toRemove.length === 0) {
-      console.log('Nothing to clean up — catalog already holds only the real plans.');
+      console.log('Nothing to clean up: the catalog holds no fixture plans.');
       return;
     }
 
@@ -90,7 +124,9 @@ async function main(): Promise<void> {
     const { count: subscriptionsRemoved } = await prisma.tenantSubscription.deleteMany({
       where: { planId: { in: removeIds } },
     });
-    console.log(`Deleted ${subscriptionsRemoved} fixture tenant_subscriptions row(s) referencing removed plans.`);
+    console.log(
+      `Deleted ${subscriptionsRemoved} fixture tenant_subscriptions row(s) referencing removed plans.`,
+    );
 
     const { count: plansRemoved } = await prisma.plan.deleteMany({
       where: { id: { in: removeIds } },
@@ -99,14 +135,10 @@ async function main(): Promise<void> {
 
     const after = await prisma.plan.count();
     console.log(`Plans in catalog now: ${after}`);
-    if (after !== REAL_PLAN_KEYS.length) {
-      throw new Error(
-        `Expected exactly ${REAL_PLAN_KEYS.length} plans after cleanup, found ${after}.`,
-      );
+    if (after !== keep.length) {
+      throw new Error(`Expected ${keep.length} plans after cleanup, found ${after}.`);
     }
-    console.log(
-      `✔ Plan catalog now holds exactly the ${REAL_PLAN_KEYS.length} real, customer-facing plans.`,
-    );
+    console.log(`✔ Plan catalog now holds only the ${keep.length} kept plan(s).`);
   } finally {
     await prisma.$disconnect();
   }

@@ -36,7 +36,14 @@ import { PlatformPlansService } from '../services/platform-plans.service';
 import type { PlanLimitImpactResponse } from '../services/platform-plans.service';
 import { PlanHistoryService } from '../services/plan-history.service';
 import type { PlanHistoryEntryResponse } from '../services/plan-history.service';
-import { ArchivePlanDto, CreatePlanDto, UpdatePlanDto } from '../dto/update-plan.dto';
+import {
+  ArchivePlanDto,
+  CreatePlanDto,
+  RestorePlanDto,
+  UpdatePlanDto,
+} from '../dto/update-plan.dto';
+import { PlatformPlanQueryDto } from '../dto/platform-plan-query.dto';
+import type { PlatformPlanRow } from '../dto/platform-plan.contract';
 import { PreviewPlanNoticeDto } from '../dto/preview-plan-notice.dto';
 import type { PlanChangeNoticePreview } from '../services/plan-change-notice.service';
 import { PreviewPlanLimitsDto } from '../dto/preview-plan-limits.dto';
@@ -51,6 +58,18 @@ export class PlatformPlansController {
     private readonly platformPlansService: PlatformPlansService,
     private readonly planHistoryService: PlanHistoryService,
   ) {}
+
+  /**
+   * Item 9 (plan management) — every plan (listed, hidden, archived) with
+   * its subscriber counts. Declared before the `:key` routes.
+   */
+  @Get()
+  async list(
+    @CurrentAuthContext() auth: AuthContext,
+    @Query() query: PlatformPlanQueryDto,
+  ): Promise<PaginatedResult<PlatformPlanRow>> {
+    return this.platformPlansService.list(auth.userId, query);
+  }
 
   @Post()
   async create(
@@ -67,6 +86,17 @@ export class PlatformPlansController {
     @Body() body: UpdatePlanDto,
   ): Promise<PlanResponse> {
     return this.platformPlansService.update(auth.userId, key, body);
+  }
+
+  /** Item 9 (plan management) — bring an archived plan back. */
+  @Post(':key/restore')
+  @HttpCode(HttpStatus.OK)
+  async restore(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('key') key: string,
+    @Body() body: RestorePlanDto,
+  ): Promise<PlanResponse> {
+    return this.platformPlansService.restore(auth.userId, key, body);
   }
 
   @Post(':key/archive')

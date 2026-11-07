@@ -40,7 +40,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { Plan, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
@@ -61,8 +61,25 @@ import {
 import type {
   ArchivePlanDto,
   CreatePlanDto,
+  RestorePlanDto,
   UpdatePlanDto,
 } from '../dto/update-plan.dto';
+import {
+  PLATFORM_PLAN_VISIBILITIES,
+  type PlatformPlanQueryDto,
+} from '../dto/platform-plan-query.dto';
+import type { PlatformPlanRow } from '../dto/platform-plan.contract';
+import {
+  buildPaginationMeta,
+  type PaginatedResult,
+} from '../../common/dto/pagination.contract';
+import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import { CUSTOMER_FACING_WHERE } from '../../plans/repositories/plans.repository';
+import { TrialPolicyRepository } from '../../plans/repositories/trial-policy.repository';
+import {
+  PlanSubscriberCountsService,
+  ZERO_SUBSCRIBER_COUNTS,
+} from './plan-subscriber-counts.service';
 import { PLAN_LIMIT_KEYS, pickPlanFeatures } from '../../plans/dto/entitlement.types';
 import type { PlanLimitKey } from '../../plans/dto/entitlement.types';
 
@@ -143,7 +160,116 @@ export class PlatformPlansService {
     private readonly tenancyContextService: TenancyContextService,
     private readonly auditLogWriterService: AuditLogWriterService,
     private readonly planChangeNoticeService: PlanChangeNoticeService,
+    private readonly planSubscriberCountsService: PlanSubscriberCountsService,
+    private readonly trialPolicyRepository: TrialPolicyRepository,
   ) {}
+
+  /**
+   * Item 9 (plan management) — every plan, for the Platform Owner: listed,
+   * hidden and archived (`PlatformPlanQueryDto`), each with who is on it.
+   * Customer endpoints keep filtering on `CUSTOMER_FACING_WHERE`; this is
+   * the one place that sees past it.
+   */
+  async list(
+    platformOwnerId: string,
+    query: PlatformPlanQueryDto,
+  ): Promise<PaginatedResult<PlatformPlanRow>> {
+    const page = query.page ?? DEFAULT_PAGE;
+    const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+    const search = query.search?.trim();
+    const matches: Prisma.PlanWhereInput = search
+      ? {
+          OR: [
+            { key: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+
+    // Listed plans first by their position, then hidden, then archived (by
+    // name). Each visibility is its own query so paging stays in the
+    // database (a shared dev database holds thousands of hidden fixtures).
+    const allGroups: readonly {
+      readonly where: Prisma.PlanWhereInput;
+      readonly orderBy: Prisma.PlanOrderByWithRelationInput[];
+    }[] = [
+      {
+        where: CUSTOMER_FACING_WHERE,
+        orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+      },
+      {
+        where: { status: 'active', displayOrder: 0 },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      },
+      { where: { status: 'archived' }, orderBy: [{ name: 'asc' }, { id: 'asc' }] },
+    ];
+    const groups =
+      query.visibility === undefined
+        ? allGroups
+        : [allGroups[PLATFORM_PLAN_VISIBILITIES.indexOf(query.visibility)]];
+
+    const counts = await Promise.all(
+      groups.map((group) =>
+        this.prisma.plan.count({ where: { AND: [group.where, matches] } }),
+      ),
+    );
+    const totalItems = counts.reduce((sum, n) => sum + n, 0);
+
+    let skip = (page - 1) * pageSize;
+    let take = pageSize;
+    const pageRows: Plan[] = [];
+    for (const [index, group] of groups.entries()) {
+      if (take === 0) break;
+      if (skip >= counts[index]) {
+        skip -= counts[index];
+        continue;
+      }
+      const rows = await this.prisma.plan.findMany({
+        where: { AND: [group.where, matches] },
+        orderBy: group.orderBy,
+        skip,
+        take,
+      });
+      pageRows.push(...rows);
+      take -= rows.length;
+      skip = 0;
+    }
+
+    const [policy, subscriberCounts] = await Promise.all([
+      this.trialPolicyRepository.findSingleton(),
+      this.planSubscriberCountsService.countByPlan(
+        platformOwnerId,
+        pageRows.map((plan) => plan.id),
+      ),
+    ]);
+    return {
+      items: pageRows.map((plan) => ({
+        ...toPlanResponse(plan, policy.durationDays),
+        subscribers: subscriberCounts.get(plan.id) ?? ZERO_SUBSCRIBER_COUNTS,
+        createdAt: plan.createdAt.toISOString(),
+        updatedAt: plan.updatedAt.toISOString(),
+      })),
+      pagination: buildPaginationMeta(page, pageSize, totalItems),
+    };
+  }
+
+  /**
+   * Item 9 (plan management) — new organizations are given the first
+   * listed plan as their placeholder (`PlansRepository.findDefaultTrialPlan`),
+   * and signup offers only listed plans. Archiving or hiding the last
+   * listed plan would leave both with nothing, so it is refused.
+   */
+  private async assertNotLastListed(
+    tx: Prisma.TransactionClient,
+    planId: string,
+  ): Promise<void> {
+    const others = await tx.plan.count({
+      where: { ...CUSTOMER_FACING_WHERE, id: { not: planId } },
+    });
+    if (others === 0) {
+      throw new ConflictException({ messageKey: 'errors.plan.lastListedPlan' });
+    }
+  }
 
   /**
    * The rules a DTO decorator cannot express — limit/feature maps and the
@@ -281,6 +407,13 @@ export class PlatformPlansService {
         );
         data.descriptionLocalized =
           payload.descriptionLocalized as unknown as Prisma.InputJsonValue;
+      }
+      if (
+        payload.displayOrder === 0 &&
+        existing.displayOrder > 0 &&
+        existing.status === 'active'
+      ) {
+        await this.assertNotLastListed(tx, existing.id);
       }
       if (payload.displayOrder !== undefined) {
         track(
@@ -431,22 +564,31 @@ export class PlatformPlansService {
    * Sets `status: 'archived'` AND `displayOrder: 0`, because
    * `CUSTOMER_FACING_WHERE` filters on both; setting only one would leave
    * the plan reachable through the other half of the predicate. Existing
-   * subscriptions are untouched: an organization already on the plan keeps
-   * its entitlements, which is the whole reason archiving exists instead of
-   * deleting.
+   * subscriptions are untouched until their period ends: an organization
+   * already on the plan keeps its entitlements, but checkout refuses an
+   * archived plan, so it cannot renew on it and must choose another plan
+   * (owner decision, plan management: subscribers lapse at period end).
+   *
+   * Refused when it would leave customers no listed plan
+   * (`assertNotLastListed`). Runs in the platform owner's context so the
+   * subscriber counts recorded in the audit entry are real (RLS hides other
+   * organizations' subscriptions from a plain transaction).
    */
   async archive(
     platformOwnerId: string,
     key: string,
     payload: ArchivePlanDto,
   ): Promise<PlanResponse> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.tenancyContextService.runInUserContext(platformOwnerId, async (tx) => {
       const existing = await tx.plan.findUnique({ where: { key } });
       if (!existing) {
         throw new NotFoundException({ messageKey: 'errors.notFound' });
       }
       if (existing.status === 'archived') {
         throw new ConflictException({ messageKey: 'errors.plan.alreadyArchived' });
+      }
+      if (existing.displayOrder > 0) {
+        await this.assertNotLastListed(tx, existing.id);
       }
 
       const result = await tx.plan.updateMany({
@@ -464,9 +606,7 @@ export class PlatformPlansService {
         });
       }
 
-      const subscriptions = await tx.tenantSubscription.count({
-        where: { planId: existing.id },
-      });
+      const counts = await this.planSubscriberCountsService.countOne(tx, existing.id);
 
       await this.auditLogWriterService.write(tx, {
         actorUserId: platformOwnerId,
@@ -479,7 +619,10 @@ export class PlatformPlansService {
           // Recorded because it is the fact that matters when reading this
           // entry later: archiving a plan someone is still on is legitimate
           // but consequential.
-          subscriptionsAtArchive: subscriptions,
+          subscriptionsAtArchive: counts.paying + counts.trialing,
+          payingAtArchive: counts.paying,
+          trialingAtArchive: counts.trialing,
+          foundingLocksAtArchive: counts.foundingLocks,
         },
         changes: {
           status: { from: existing.status, to: 'archived' },
@@ -492,6 +635,62 @@ export class PlatformPlansService {
     });
   }
 
+  /**
+   * Item 9 (plan management) — bring an archived plan back, hidden
+   * (`displayOrder: 0`) or listed at a position. The opposite of
+   * `archive`, recorded the same way (`plan.restored`, in the plan's
+   * history).
+   */
+  async restore(
+    platformOwnerId: string,
+    key: string,
+    payload: RestorePlanDto,
+  ): Promise<PlanResponse> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.plan.findUnique({ where: { key } });
+      if (!existing) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      if (existing.status !== 'archived') {
+        throw new ConflictException({ messageKey: 'errors.plan.notArchived' });
+      }
+
+      const result = await tx.plan.updateMany({
+        where: { id: existing.id, version: payload.expectedVersion },
+        data: {
+          status: 'active',
+          displayOrder: payload.displayOrder,
+          version: { increment: 1 },
+        },
+      });
+      if (result.count === 0) {
+        const current = await tx.plan.findUnique({
+          where: { id: existing.id },
+          select: { version: true },
+        });
+        throw new StaleResourceVersionException({
+          submittedVersion: payload.expectedVersion,
+          currentVersion: current?.version ?? payload.expectedVersion,
+        });
+      }
+
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: platformOwnerId,
+        action: 'plan.restored',
+        targetType: 'plan',
+        targetId: existing.id,
+        targetLabel: existing.name,
+        context: { key: existing.key, displayOrder: payload.displayOrder },
+        changes: {
+          status: { from: 'archived', to: 'active' },
+          displayOrder: { from: existing.displayOrder, to: payload.displayOrder },
+        },
+      });
+
+      const updated = await tx.plan.findUniqueOrThrow({ where: { id: existing.id } });
+      return toPlanResponse(updated);
+    });
+  }
   /**
    * Which organizations already exceed a proposed limit set.
    *

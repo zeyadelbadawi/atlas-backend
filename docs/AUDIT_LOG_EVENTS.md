@@ -279,7 +279,8 @@ writer stores.
 | `plan.pricing_changed` | platform | platform | no | key |
 | `plan.subscribers_notified` | platform | platform | no | key, planVersion, notified, cleared, failed |
 | `plan.trial_config_changed` | platform | platform | no | key |
-| `plan.archived` | platform | platform | no | key, subscriptionsAtArchive |
+| `plan.archived` | platform | platform | no | key, subscriptionsAtArchive, payingAtArchive, trialingAtArchive, foundingLocksAtArchive |
+| `plan.restored` | platform | platform | no | key, displayOrder |
 | `platform_settings.updated` | platform | platform | no | platformName, platformDescription, supportEmail, twoFactorRequired, sessionTimeoutMinutes |
 | `payment_method.created` | platform | platform | no | key, type, enabled |
 | `payment_method.updated` | platform | platform | no | fields, enabled |
@@ -291,6 +292,7 @@ writer stores.
 | `payout.created` | platform | platform | no | academyId, currency, amountMinorUnits, periodStart, periodEnd, items |
 | `payout.marked_paid` | platform | platform | no | academyId, currency, amountMinorUnits, providerReference |
 | `add_on.catalog_status_changed` | platform | platform | no | addOnKey, previousStatus, newStatus |
+| `add_on.pricing_changed` | platform | platform | no | addOnKey |
 | `observability.synthetic_alert.armed` | platform | platform | no | minutes |
 | `observability.synthetic_alert.resolved` | platform | platform | no | — |
 | `platform.contact_submission.status_changed` | platform | platform | no | status, previousStatus |

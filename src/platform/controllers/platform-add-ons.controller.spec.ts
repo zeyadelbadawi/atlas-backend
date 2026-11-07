@@ -20,15 +20,20 @@ describe('PlatformAddOnsController', () => {
   let controller: PlatformAddOnsController;
   let list: jest.Mock;
   let updateCatalogStatus: jest.Mock;
+  let updatePricing: jest.Mock;
 
   beforeEach(async () => {
     list = jest.fn().mockResolvedValue({ items: [], pagination: {} });
     updateCatalogStatus = jest.fn().mockResolvedValue({ key: 'k' });
+    updatePricing = jest.fn().mockResolvedValue({ key: 'k' });
 
     const moduleRef = await Test.createTestingModule({
       controllers: [PlatformAddOnsController],
       providers: [
-        { provide: PlatformAddOnsService, useValue: { list, updateCatalogStatus } },
+        {
+          provide: PlatformAddOnsService,
+          useValue: { list, updateCatalogStatus, updatePricing },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -67,5 +72,11 @@ describe('PlatformAddOnsController', () => {
       catalogStatus: 'published',
       expectedVersion: 2,
     });
+  });
+
+  it('changes the price using the authenticated actor, the path key and the body', async () => {
+    const body = { amount: 450, currency: 'EGP', expectedVersion: 3 };
+    await controller.updatePricing(AUTH, 'live-sessions', body);
+    expect(updatePricing).toHaveBeenCalledWith('po-1', 'live-sessions', body);
   });
 });
