@@ -468,8 +468,22 @@ describe('PublicWebsiteService.submitContactMessage — "register your interest"
 });
 
 describe('PublicWebsiteService.getPublicStatistics', () => {
+  const studentsShown = {
+    sections: [
+      {
+        id: 'stats',
+        type: 'statistics',
+        enabled: true,
+        config: { items: [{ id: 'i1', metric: 'students' }] },
+      },
+    ],
+    publishedSections: null,
+  };
+
   it('counts only active students, mirroring the active-instructor count', async () => {
-    const { service, tx, academyStudentsRepository, academyMembersRepository } = build();
+    const { service, tx, academyStudentsRepository, academyMembersRepository } = build({
+      pages: [studentsShown],
+    });
 
     await expect(service.getPublicStatistics(ACADEMY_ID)).resolves.toEqual({
       courses: 3,
@@ -485,6 +499,16 @@ describe('PublicWebsiteService.getPublicStatistics', () => {
       ACADEMY_ID,
       'instructor',
     );
+  });
+  it('does not count or return the learner count when no page shows it', async () => {
+    const { service, academyStudentsRepository } = build({ pages: [] });
+
+    await expect(service.getPublicStatistics(ACADEMY_ID)).resolves.toEqual({
+      courses: 3,
+      students: null,
+      instructors: 2,
+    });
+    expect(academyStudentsRepository.countActiveForAcademy).not.toHaveBeenCalled();
   });
 });
 

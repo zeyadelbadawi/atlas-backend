@@ -84,6 +84,7 @@ import {
   MAX_PAGE_SIZE,
 } from '../../common/dto/collection-query.dto';
 import { buildSitemapUrls, type SitemapUrl } from '../utils/seo-files.util';
+import { academyShowsStudentCount } from '../utils/statistics-visibility.util';
 import type { PublicWebsiteStatisticsResponse } from '../dto/public-statistics.contract';
 import type { SubmitContactMessageDto } from '../dto/submit-contact-message.dto';
 import {
@@ -675,16 +676,19 @@ export class PublicWebsiteService {
     const organizationId = await this.resolveOrganizationId(academyId);
     if (!organizationId) return null;
 
-    const [courses, students, instructors] =
-      await this.tenancyContextService.runInTenantContext(organizationId, (tx) =>
-        Promise.all([
-          this.coursesRepository.countPublished(tx, academyId),
-          this.academyStudentsRepository.countActiveForAcademy(tx, academyId),
-          this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
-        ]),
-      );
-
-    return { courses, students, instructors };
+    return this.tenancyContextService.runInTenantContext(organizationId, async (tx) => {
+      const [courses, instructors, pages] = await Promise.all([
+        this.coursesRepository.countPublished(tx, academyId),
+        this.academyMembersRepository.countByRoleAndStatus(tx, academyId, 'instructor'),
+        this.websitePagesRepository.findAllPublished(tx, academyId),
+      ]);
+      // The learner count is public only where the academy shows it
+      // (`statistics-visibility.util.ts`); otherwise it is not even counted.
+      const students = academyShowsStudentCount(pages)
+        ? await this.academyStudentsRepository.countActiveForAcademy(tx, academyId)
+        : null;
+      return { courses, students, instructors };
+    });
   }
 
   /**

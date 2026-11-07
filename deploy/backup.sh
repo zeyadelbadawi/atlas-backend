@@ -135,10 +135,14 @@ docker run --rm \
 # when it is older than 26 h. Atomic (temp file + rename) so a scrape never
 # reads half a file. A failure to write it must not turn a good backup into
 # a failed one, so it only warns — the stale alert then says so.
+# The backend container reads it as another user, so it is always 0644: a
+# manual run from a shell with `umask 077` (as in the SUPERUSER_DATABASE_URL
+# split runbook) once left it 0600, and the metric silently went absent.
 STATUS_DIR="${LOCAL_DIR}/status"
 if mkdir -p "$STATUS_DIR" 2>/dev/null \
   && printf 'timestamp=%s\nsize_bytes=%s\nfile=%s\n' "$(date -u +%s)" "$SIZE" "$FILENAME" \
     > "${STATUS_DIR}/.last-success.tmp" \
+  && chmod 0644 "${STATUS_DIR}/.last-success.tmp" \
   && mv -f "${STATUS_DIR}/.last-success.tmp" "${STATUS_DIR}/last-success"; then
   echo "Recorded backup status for monitoring."
 else

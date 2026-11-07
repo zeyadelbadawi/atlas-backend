@@ -136,7 +136,7 @@ if [ "$KEY_IN_ENV" != yes ]; then
 fi
 if [ "$KEY_LOADED" != yes ]; then
   echo "REFUSED  the running backend has not loaded the pinned CUSTOMER_IDENTITY_HMAC_KEY" >&2
-  echo "         (recreate it: docker compose up -d --force-recreate --no-deps backend). Nothing was written." >&2
+  echo "         (recreate it: OBS_PROMETHEUS_URL=http://prometheus:9090 OBS_ALERTMANAGER_URL=http://alertmanager:9093 docker compose up -d --force-recreate --no-deps backend). Nothing was written." >&2
   exit 1
 fi
 

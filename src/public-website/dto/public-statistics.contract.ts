@@ -6,6 +6,11 @@
  */
 export interface PublicWebsiteStatisticsResponse {
   readonly courses: number;
-  readonly students: number;
+  /**
+   * Active learners — `null` unless an enabled Statistics section on one of
+   * the academy's pages shows the `students` metric (the count is not public
+   * otherwise).
+   */
+  readonly students: number | null;
   readonly instructors: number;
 }
