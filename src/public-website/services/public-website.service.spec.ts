@@ -64,10 +64,7 @@ function build(options: BuildOptions = {}) {
     getPages: jest.fn(async () => cachedPages),
     setPages: jest.fn(async () => undefined),
   };
-  const websitePagesRepository = {
-    findAllPublished: jest.fn(async () => pages),
-    findAllForAcademy: jest.fn(async () => pages),
-  };
+  const websitePagesRepository = { findAllPublished: jest.fn(async () => pages) };
   const websiteFaqEntriesRepository = {
     findPublishedVisibleByIds: jest.fn(async () => faqEntries),
   };

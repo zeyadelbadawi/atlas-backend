@@ -38,7 +38,12 @@ function showsStudents(sections: unknown): boolean {
   });
 }
 
-/** Whether any page (draft or published) shows the learner count. */
+/**
+ * Whether any of the given pages shows the learner count. The caller passes
+ * the published, visible pages (`findAllPublished`, whose rows carry the
+ * published sections); both section fields are read so the check holds for
+ * either row shape.
+ */
 export function academyShowsStudentCount(pages: readonly PageSectionsSource[]): boolean {
   return pages.some(
     (page) => showsStudents(page.sections) || showsStudents(page.publishedSections),
