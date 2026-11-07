@@ -22,11 +22,11 @@ import { PrismaService } from '../../database/prisma.service';
  * raw `admin.plan.create(...)` call across the e2e suite) — none of which
  * ever sets `displayOrder`, so it stays at its schema default of `0`.
  *
- * Root cause this closes: `plans` has no write endpoint at all (a real
- * Plan is only ever created by `prisma/seed.ts` or raw test fixtures —
- * never application code), so a `displayOrder` of exactly `0` is not a
- * legitimate "first position" — it is the unambiguous signature of a
- * fixture row. Investigated live: the shared dev database held 6,039 Plan
+ * Root cause this closed: when this filter was written, `plans` had no
+ * write endpoint, so a `displayOrder` of exactly `0` was the signature of a
+ * fixture row. Today `0` means "hidden": not offered to customers, still
+ * buyable by key (founding locks, Enterprise deals, and plans the Platform
+ * Owner creates, which start hidden). Investigated live: the shared dev database held 6,039 Plan
  * rows, 6,036 of them fixtures (`displayOrder: 0`), several thousand with
  * no `pricing` at all — and because the catalog was sorted by
  * `displayOrder ASC` with no floor, those fixtures sorted BEFORE the 3 real
@@ -39,7 +39,7 @@ import { PrismaService } from '../../database/prisma.service';
  * `status: 'active'` is kept alongside it — an intentionally archived plan
  * (real or fixture) must never resurface here either.
  */
-const CUSTOMER_FACING_WHERE: Prisma.PlanWhereInput = {
+export const CUSTOMER_FACING_WHERE: Prisma.PlanWhereInput = {
   status: 'active',
   displayOrder: { gt: 0 },
 };

@@ -376,3 +376,17 @@ export class ArchivePlanDto {
   @Min(0)
   readonly expectedVersion!: number;
 }
+
+/**
+ * Item 9 (plan management) — bring an archived plan back. `displayOrder`
+ * decides where it returns: `0` keeps it hidden (buyable by key only),
+ * any other position lists it for customers again.
+ */
+export class RestorePlanDto {
+  @IsInt()
+  @Min(0)
+  readonly expectedVersion!: number;
+
+  @IsIntInRange(0, 1000)
+  readonly displayOrder!: number;
+}

@@ -9,6 +9,7 @@
  */
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import type { AddOnCatalogStatusValue } from './platform-add-on-query.dto';
+import type { PlanPricingMetadataResponse } from '../../plans/dto/plan.contract';
 
 export interface PlatformAddOnRow {
   readonly id: string;
@@ -19,6 +20,8 @@ export interface PlatformAddOnRow {
   readonly nameAr: string | null;
   readonly descriptionAr: string | null;
   readonly catalogStatus: AddOnCatalogStatusValue;
+  /** Plan management (item 9) — the price for new purchases; `null` = not priced (free to install). */
+  readonly pricing: PlanPricingMetadataResponse | null;
   /** Academies that currently have this add-on installed (any non-uninstalled row). */
   readonly installCount: number;
   /** Academies that currently have this add-on enabled (its effect is live). */

@@ -54,6 +54,7 @@ import { PlatformAddOnsService } from './services/platform-add-ons.service';
 import { PlatformPlansService } from './services/platform-plans.service';
 import { PlanHistoryService } from './services/plan-history.service';
 import { PlanChangeNoticeService } from './services/plan-change-notice.service';
+import { PlanSubscriberCountsService } from './services/plan-subscriber-counts.service';
 import { PlatformSubscriptionAdjustmentsService } from './services/platform-subscription-adjustments.service';
 import { PlatformOrganizationFlagsService } from './services/platform-organization-flags.service';
 import { PlatformOrganizationFlagsController } from './controllers/platform-organization-flags.controller';
@@ -112,6 +113,7 @@ import { PlatformSettingsRepository } from './repositories/platform-settings.rep
     PlatformCoursesService,
     PlanHistoryService,
     PlanChangeNoticeService,
+    PlanSubscriberCountsService,
     PlatformSubscriptionAdjustmentsService,
     PlatformOrganizationFlagsService,
     PlatformUsersRepository,

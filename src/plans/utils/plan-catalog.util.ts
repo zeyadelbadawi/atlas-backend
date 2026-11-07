@@ -163,9 +163,9 @@ export const PLAN_CATALOG_VARIANTS: readonly PlanCatalogVariant[] = PLAN_FAMILIE
 /**
  * The `plans.key` of every real, catalog-defined plan.
  *
- * Used by `scripts/cleanup-plan-catalog.ts` to tell a real plan from an
- * accumulated e2e fixture row. Anything not listed here is deletable, so
- * this list is load-bearing for data safety, not just for display.
+ * Used by `scripts/cleanup-plan-catalog.ts` as one of the reasons to keep a
+ * plan. It is not the only one: plans created in the Platform Owner console
+ * have other keys and are kept too (`plan-cleanup.util.ts`).
  */
 export const PLAN_CATALOG_KEYS: readonly string[] = PLAN_CATALOG_VARIANTS.map(
   (variant) => variant.key,

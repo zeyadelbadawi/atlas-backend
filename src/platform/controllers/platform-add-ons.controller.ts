@@ -24,6 +24,7 @@ import { PlatformAddOnsService } from '../services/platform-add-ons.service';
 import { PlatformAddOnQueryDto } from '../dto/platform-add-on-query.dto';
 import { UpdateAddOnCatalogStatusDto } from '../dto/update-add-on-catalog-status.dto';
 import { UpdateAddOnArabicTextDto } from '../dto/update-add-on-arabic-text.dto';
+import { UpdateAddOnPricingDto } from '../dto/update-add-on-pricing.dto';
 import type {
   PlatformAddOnListResponse,
   PlatformAddOnRow,
@@ -59,5 +60,15 @@ export class PlatformAddOnsController {
     @Body() payload: UpdateAddOnArabicTextDto,
   ): Promise<PlatformAddOnRow> {
     return this.platformAddOnsService.updateArabicText(auth.userId, key, payload);
+  }
+
+  /** Plan management (item 9) — the price for new purchases (EGP, 1..1,000,000). */
+  @Patch(':key/pricing')
+  async updatePricing(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('key') key: string,
+    @Body() payload: UpdateAddOnPricingDto,
+  ): Promise<PlatformAddOnRow> {
+    return this.platformAddOnsService.updatePricing(auth.userId, key, payload);
   }
 }

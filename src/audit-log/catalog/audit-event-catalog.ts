@@ -1177,7 +1177,11 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('plan.archived', 'platform', 'plan', 'platform', false, [
     'key',
     'subscriptionsAtArchive',
+    'payingAtArchive',
+    'trialingAtArchive',
+    'foundingLocksAtArchive',
   ]),
+  ev('plan.restored', 'platform', 'plan', 'platform', false, ['key', 'displayOrder']),
   ev('platform_settings.updated', 'platform', 'platform_settings', 'platform', false, [
     'platformName',
     'platformDescription',
@@ -1261,6 +1265,7 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'addOnKey',
     'fields',
   ]),
+  ev('add_on.pricing_changed', 'platform', 'add_on', 'platform', false, ['addOnKey']),
   ev(
     'observability.synthetic_alert.armed',
     'platform',

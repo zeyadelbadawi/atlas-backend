@@ -33,6 +33,9 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-que
 import type { PlatformAddOnQueryDto } from '../dto/platform-add-on-query.dto';
 import type { UpdateAddOnCatalogStatusDto } from '../dto/update-add-on-catalog-status.dto';
 import type { UpdateAddOnArabicTextDto } from '../dto/update-add-on-arabic-text.dto';
+import type { UpdateAddOnPricingDto } from '../dto/update-add-on-pricing.dto';
+import type { PlanPricingMetadataResponse } from '../../plans/dto/plan.contract';
+import { assertCurrencyAllowed } from '../../common/currency/supported-currency';
 import type {
   PlatformAddOnListResponse,
   PlatformAddOnRow,
@@ -198,6 +201,66 @@ export class PlatformAddOnsService {
     });
   }
 
+  /**
+   * Plan management (item 9) — the add-on's price for new purchases
+   * (`UpdateAddOnPricingDto`). Version-guarded and audited like the other
+   * add-on edits (`add_on.pricing_changed`, with the old and new price).
+   * The billing cycle (and any yearly price) stays as stored.
+   */
+  async updatePricing(
+    platformOwnerId: string,
+    key: string,
+    payload: UpdateAddOnPricingDto,
+  ): Promise<PlatformAddOnRow> {
+    // EGP only (owner decision): no exception for an add-on that is still
+    // priced in another currency.
+    assertCurrencyAllowed(payload.currency, undefined, 'currency');
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.addOn.findUnique({ where: { key } });
+      if (!existing) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+      const before = (existing.pricing as PlanPricingMetadataResponse | null) ?? null;
+      const next: PlanPricingMetadataResponse = {
+        ...(before ?? {}),
+        amount: payload.amount,
+        currency: payload.currency,
+        billingCycle: before?.billingCycle ?? 'monthly',
+      };
+
+      const result = await tx.addOn.updateMany({
+        where: { id: existing.id, version: payload.expectedVersion },
+        data: {
+          pricing: next as unknown as Prisma.InputJsonValue,
+          version: { increment: 1 },
+        },
+      });
+      if (result.count === 0) {
+        const current = await tx.addOn.findUnique({ where: { id: existing.id } });
+        throw new StaleResourceVersionException({
+          submittedVersion: payload.expectedVersion,
+          currentVersion: current?.version ?? payload.expectedVersion,
+          lastEditedAt: current?.updatedAt.toISOString(),
+        });
+      }
+
+      const updated = await tx.addOn.findUnique({ where: { id: existing.id } });
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: platformOwnerId,
+        role: 'platform_owner',
+        action: 'add_on.pricing_changed',
+        targetType: 'add_on',
+        targetId: existing.id,
+        targetLabel: existing.name,
+        context: { addOnKey: existing.key },
+        changes: { pricing: { from: before, to: next } },
+      });
+
+      const counts = (await this.countsByAddOnId(platformOwnerId)).get(existing.id);
+      return this.toRow(updated ?? existing, counts);
+    });
+  }
+
   /** Per-add-on install/enabled counts, aggregated across tenants in platform context. */
   private async countsByAddOnId(
     platformOwnerId: string,
@@ -274,6 +337,7 @@ export class PlatformAddOnsService {
       nameAr: addOn.nameAr,
       descriptionAr: addOn.descriptionAr,
       catalogStatus: addOn.catalogStatus,
+      pricing: (addOn.pricing as PlanPricingMetadataResponse | null) ?? null,
       installCount: counts?.install ?? 0,
       enabledCount: counts?.enabled ?? 0,
       version: addOn.version,

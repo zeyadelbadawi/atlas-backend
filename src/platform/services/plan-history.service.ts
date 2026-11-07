@@ -48,6 +48,7 @@ export const PLAN_HISTORY_ACTIONS: readonly string[] = [
   'plan.trial_config_changed',
   'plan.subscribers_notified',
   'plan.archived',
+  'plan.restored',
 ];
 
 export interface PlanHistoryEntryResponse {
