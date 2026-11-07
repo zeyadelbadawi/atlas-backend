@@ -41,6 +41,11 @@ describe('brand-images.util', () => {
     expect(escapeMarkup(`<b>&"'`)).toBe('&lt;b&gt;&amp;&quot;&apos;');
     expect(displayName('  A\u0000cademy \n name ')).toBe('Academy name');
     expect([...displayName('x'.repeat(200))]).toHaveLength(90);
+    // Cut by code point: an emoji at the boundary is kept whole or dropped.
+    const astral = displayName(`${'a'.repeat(88)}${'😀'.repeat(3)}`);
+    expect([...astral]).toHaveLength(90);
+    expect(astral).toBe(`${'a'.repeat(88)}😀…`);
+    expect(astral).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
     expect(cardFontSize('Short')).toBeGreaterThan(
       cardFontSize('A considerably longer academy name here'),
     );
@@ -86,5 +91,13 @@ describe('BrandImagesService (real rendering)', () => {
     expect(again.png).toBe(first.png);
     const small = await service.renderMonogram('a1', { name: 'Horizon' }, 96);
     expect((await sharp(small.png).metadata()).width).toBe(96);
+  }, 30_000);
+
+  it('shares one render between concurrent requests for the same image', async () => {
+    const [a, b] = await Promise.all([
+      service.renderMonogram('a2', { name: 'Nile' }, 180),
+      service.renderMonogram('a2', { name: 'Nile' }, 180),
+    ]);
+    expect(b.png).toBe(a.png);
   }, 30_000);
 });

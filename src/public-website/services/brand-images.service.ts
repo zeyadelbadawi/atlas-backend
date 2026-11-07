@@ -56,10 +56,16 @@ let fontsConfigured = false;
 /** Points fontconfig at the bundled Noto fonts (once per process). */
 export function configureBundledFonts(): void {
   if (fontsConfigured) return;
-  fontsConfigured = true;
-  if (process.env.FONTCONFIG_FILE) return;
-  const fontDir = FONT_DIRS.find((dir) => existsSync(join(dir, 'NotoSans-Bold.ttf')));
-  if (!fontDir) return;
+  // An operator's own fontconfig, or no bundled fonts: nothing to do, ever.
+  // A filesystem error below leaves `fontsConfigured` unset, so a later
+  // request retries.
+  const fontDir = process.env.FONTCONFIG_FILE
+    ? undefined
+    : FONT_DIRS.find((dir) => existsSync(join(dir, 'NotoSans-Bold.ttf')));
+  if (!fontDir) {
+    fontsConfigured = true;
+    return;
+  }
   const dir = join(tmpdir(), 'atlas-fontconfig');
   mkdirSync(join(dir, 'cache'), { recursive: true });
   const file = join(dir, 'fonts.conf');
@@ -76,6 +82,7 @@ export function configureBundledFonts(): void {
     ].join('\n'),
   );
   process.env.FONTCONFIG_FILE = file;
+  fontsConfigured = true;
 }
 
 /** Latin first, Arabic for what Latin lacks. */
@@ -85,6 +92,7 @@ const FONT_FAMILY = 'Noto Sans, Noto Sans Arabic';
 export class BrandImagesService {
   private readonly logger = new Logger(BrandImagesService.name);
   private readonly cache = new Map<string, Buffer>();
+  private readonly inFlight = new Map<string, Promise<Buffer>>();
 
   async renderCard(
     academyId: string,
@@ -200,13 +208,21 @@ export class BrandImagesService {
       this.cache.set(key, hit);
       return hit;
     }
+    // Concurrent requests for the same uncached image share one render.
+    const pending = this.inFlight.get(key);
+    if (pending) return pending;
     const started = Date.now();
-    const png = await render();
-    this.cache.set(key, png);
-    while (this.cache.size > CACHE_LIMIT) {
-      this.cache.delete(this.cache.keys().next().value as string);
-    }
-    this.logger.debug(`rendered ${key.split('|')[0]} in ${Date.now() - started} ms`);
-    return png;
+    const rendering = render()
+      .then((png) => {
+        this.cache.set(key, png);
+        while (this.cache.size > CACHE_LIMIT) {
+          this.cache.delete(this.cache.keys().next().value as string);
+        }
+        this.logger.debug(`rendered ${key.split('|')[0]} in ${Date.now() - started} ms`);
+        return png;
+      })
+      .finally(() => this.inFlight.delete(key));
+    this.inFlight.set(key, rendering);
+    return rendering;
   }
 }

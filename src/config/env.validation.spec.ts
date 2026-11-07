@@ -47,6 +47,8 @@ describe('validateEnv', () => {
       'APPLE_TEAM_ID',
       'APPLE_KEY_ID',
       'APPLE_PRIVATE_KEY',
+      'INDEXNOW',
+      'INDEXNOW_KEY_SECRET',
     ];
     const blank = Object.fromEntries(keys.map((k) => [k, '']));
     const result = validateEnv({ ...VALID_BASE, NODE_ENV: 'development', ...blank });

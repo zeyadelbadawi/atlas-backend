@@ -219,6 +219,16 @@ describe('buildLlmsFullTxt', () => {
     expect(text).toContain('What you will learn:\n\n- Run interviews');
     expect(text).toContain('Requirements:\n\n- None');
   });
+
+  it('never lets a description or answer turn its line into a setext heading', () => {
+    const [course] = input.courses;
+    const full = buildLlmsFullTxt({
+      ...input,
+      courses: [{ ...course, description: 'Big news\n===\nand more\n---' }],
+    });
+    expect(full).toContain('Big news\n\\===\nand more\n\\---');
+    expect(full).not.toMatch(/^(=+|-+)$/m);
+  });
 });
 
 describe('pageSummary / pageFaqs', () => {

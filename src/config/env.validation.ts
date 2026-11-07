@@ -840,8 +840,8 @@ const EnvSchema = z.object({
   // SEO/AEO/GEO pass — IndexNow submissions of changed Academy website URLs
   // (on unless `off`); the per-Academy key is derived from this secret, or
   // from JWT_ACCESS_SECRET when it is unset.
-  INDEXNOW: z.enum(['on', 'off']).optional(),
-  INDEXNOW_KEY_SECRET: z.string().min(16).optional(),
+  INDEXNOW: blankAsUnset(z.enum(['on', 'off']).optional()),
+  INDEXNOW_KEY_SECRET: blankAsUnset(z.string().min(16).optional()),
 
   // --- Phase P12 — Atlas Subscription Billing (master plan §5.7, §12,
   // §16, §21 P12) ---

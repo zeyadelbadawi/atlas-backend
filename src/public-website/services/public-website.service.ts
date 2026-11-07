@@ -42,6 +42,7 @@ import {
 } from '../../website/dto/website-page.contract';
 import { PublicHostnameResolutionRepository } from '../repositories/public-hostname-resolution.repository';
 import { faviconVersion, parseFavicon, type FaviconSource } from '../utils/favicon.util';
+import { LLMS_MAX_COURSES } from '../utils/llms-txt.util';
 import type { LlmsNavigationItem, LlmsPage, LlmsTxtInput } from '../utils/llms-txt.util';
 import { PublicWebsiteCacheService } from './public-website-cache.service';
 import {
@@ -470,7 +471,7 @@ export class PublicWebsiteService {
     if (!site || !site.indexable) return null;
     const [pages, courses, identity] = await Promise.all([
       this.getPublishedPages(site.academyId),
-      this.listAllPublicCourses(site.academyId),
+      this.listAllPublicCourses(site.academyId, LLMS_MAX_COURSES),
       this.getPublicIdentity(site.academyId),
     ]);
     const seo = (site.configuration.seo ?? {}) as Record<string, unknown>;
@@ -516,10 +517,17 @@ export class PublicWebsiteService {
     };
   }
 
-  /** Every published public course, up to the sitemap's bound. */
-  private async listAllPublicCourses(academyId: string): Promise<CourseResponse[]> {
+  /** Every published public course, up to the sitemap's bound (or `limit`, for llms.txt). */
+  private async listAllPublicCourses(
+    academyId: string,
+    limit = Number.POSITIVE_INFINITY,
+  ): Promise<CourseResponse[]> {
     const courses: CourseResponse[] = [];
-    for (let page = 1; page <= SITEMAP_MAX_COURSE_PAGES; page += 1) {
+    for (
+      let page = 1;
+      page <= SITEMAP_MAX_COURSE_PAGES && courses.length < limit;
+      page += 1
+    ) {
       const result = await this.getPublicCourses(academyId, {
         page,
         pageSize: MAX_PAGE_SIZE,

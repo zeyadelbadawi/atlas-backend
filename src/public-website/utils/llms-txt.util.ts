@@ -115,7 +115,11 @@ function inline(value: string | undefined, max = SHORT_TEXT): string {
   return `${space > max * 0.6 ? cut.slice(0, space) : cut}…`;
 }
 
-/** Paragraph text: line breaks kept, a line that would start a Markdown heading escaped. */
+/**
+ * Paragraph text: line breaks kept, a line that would start a Markdown
+ * heading escaped — an ATX `#` or a setext underline (`===` / `---`) that
+ * would turn the line above into a heading.
+ */
 function block(value: string | undefined, max = LONG_TEXT): string {
   const text = (value ?? '')
     .replace(/<[^>]*>/g, ' ')
@@ -125,7 +129,8 @@ function block(value: string | undefined, max = LONG_TEXT): string {
       line
         .replace(/[ \t]+/g, ' ')
         .trim()
-        .replace(/^#/, '\\#'),
+        .replace(/^#/, '\\#')
+        .replace(/^(=+|-+)$/, '\\$1'),
     )
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')

@@ -110,7 +110,11 @@ export function displayName(name: string): string {
     .replace(/\p{Cc}/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return clean.length > 90 ? `${clean.slice(0, 89)}…` : clean || 'Academy';
+  // By code point, so an emoji or other astral character is never split.
+  const characters = [...clean];
+  return characters.length > 90
+    ? `${characters.slice(0, 89).join('')}…`
+    : clean || 'Academy';
 }
 
 /** The monogram's letter: the name's first letter or digit (a whole grapheme, Arabic included), upper-cased. */

@@ -39,6 +39,8 @@ export const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/indexnow';
 export const INDEXNOW_KEY_PATH = '/indexnow-key.txt';
 /** Coalesce a burst of edits (a publish touches many rows) into one submission. */
 const DEBOUNCE_MS = 60_000;
+/** A steady stream of changes still submits at least this often (no endless postponing). */
+const MAX_WAIT_MS = 10 * 60_000;
 /** The first submission after a restart: URLs changed this recently. */
 const FIRST_WINDOW_MS = 2 * 60 * 60 * 1000;
 /** The protocol's limit per request. */
@@ -52,6 +54,8 @@ export class IndexNowService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(IndexNowService.name);
   private readonly config: IndexNowConfig;
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  /** When the pending batch's first change arrived, per Academy (bounds the debounce). */
+  private readonly firstPendingAt = new Map<string, number>();
   private readonly lastSubmittedAt = new Map<string, number>();
 
   constructor(
@@ -77,6 +81,7 @@ export class IndexNowService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    this.firstPendingAt.clear();
   }
 
   /** The Academy's IndexNow key: 32 lowercase hex characters (the protocol allows 8–128 of `[a-zA-Z0-9-]`). */
@@ -101,12 +106,18 @@ export class IndexNowService implements OnModuleInit, OnModuleDestroy {
   /** Something the Academy's website shows changed: submit its changed URLs soon. */
   notify(academyId: string): void {
     if (!this.enabled) return;
+    const now = Date.now();
+    const first = this.firstPendingAt.get(academyId) ?? now;
+    this.firstPendingAt.set(academyId, first);
     const existing = this.timers.get(academyId);
     if (existing) clearTimeout(existing);
+    // Coalesce bursts, but never wait past MAX_WAIT_MS from the batch's first change.
+    const delay = Math.max(0, Math.min(DEBOUNCE_MS, first + MAX_WAIT_MS - now));
     const timer = setTimeout(() => {
       this.timers.delete(academyId);
+      this.firstPendingAt.delete(academyId);
       void this.submit(academyId);
-    }, DEBOUNCE_MS);
+    }, delay);
     timer.unref?.();
     this.timers.set(academyId, timer);
   }

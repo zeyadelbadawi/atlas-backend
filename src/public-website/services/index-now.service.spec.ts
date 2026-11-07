@@ -157,4 +157,21 @@ describe('IndexNowService', () => {
       jest.useRealTimers();
     }
   });
+
+  it('still submits within ten minutes when changes never stop arriving', () => {
+    jest.useFakeTimers();
+    try {
+      const { service } = setup();
+      const submit = jest.spyOn(service, 'submit').mockResolvedValue([]);
+      // A change every 30 s would postpone a plain debounce forever.
+      for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += 30_000) {
+        service.notify(ACADEMY);
+        jest.advanceTimersByTime(30_000);
+      }
+      expect(submit).toHaveBeenCalledTimes(1);
+      service.onModuleDestroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
