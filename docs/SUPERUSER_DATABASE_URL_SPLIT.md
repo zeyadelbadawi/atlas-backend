@@ -32,9 +32,11 @@ Run on the VPS as the deploy user, from `/opt/atlas`. Never print the value.
 
    ```bash
    cd /opt/atlas
-   umask 077
-   grep -E '^DATABASE_URL=' .env > .env.migrate
-   test -s .env.migrate && sed -i '/^DATABASE_URL=/d' .env
+   # umask in a subshell only: left set in the shell, later files (the
+   # backup status file of a manual backup) are unreadable to the backend.
+   ( umask 077
+     grep -E '^DATABASE_URL=' .env > .env.migrate
+     test -s .env.migrate && sed -i '/^DATABASE_URL=/d' .env )
    ls -l .env.migrate          # -rw------- deploy deploy
    grep -c '^DATABASE_URL=' .env   # 0
    ```
