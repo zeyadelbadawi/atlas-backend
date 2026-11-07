@@ -290,7 +290,11 @@ describe('Push devices and delivery (e2e, B1)', () => {
       academyId: a.id,
       path: '/my/payments',
     });
-    expect(JSON.stringify(message)).not.toMatch(/1500|Secret Course/);
+    // Nothing personal rides along: every field is checked exactly above,
+    // and there are no others (not the amount, not the course title). A
+    // regex over the whole message also matched the random token and the
+    // timestamped academy name, so it failed by chance (e.g. "…3615005").
+    expect(Object.keys(message).sort()).toEqual(['body', 'data', 'title', 'token']);
   });
 
   it('PUSH-06 — a signed-out session gets nothing', async () => {
