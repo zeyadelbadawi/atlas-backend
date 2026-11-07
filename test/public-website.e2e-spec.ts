@@ -390,6 +390,37 @@ describe('Public Website Runtime (e2e)', () => {
       await seedAcademyStudent(admin, academyB.id, student.userId);
     }
 
+    // B4 sweep: the learner count is not public until a page shows it.
+    const hidden = await request(app.getHttpServer())
+      .get(`/public/websites/${academyA.id}/statistics`)
+      .expect(200);
+    expect(hidden.body).toEqual({ courses: 1, students: null, instructors: 1 });
+
+    await admin.websitePage.create({
+      data: {
+        academyId: academyA.id,
+        pageType: 'custom',
+        title: 'Stats',
+        slug: `pub-stats-a-${Date.now()}`,
+        seo: {},
+        publishedVisible: true,
+        sections: [],
+        publishedSections: [
+          {
+            id: 'stats',
+            type: 'statistics',
+            enabled: true,
+            visibility: { desktop: true, tablet: true, mobile: true },
+            config: {
+              items: [
+                { id: 'i1', metric: 'students', label: { en: 'Learners', ar: 'الطلاب' } },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
     const statsA = await request(app.getHttpServer())
       .get(`/public/websites/${academyA.id}/statistics`)
       .expect(200);

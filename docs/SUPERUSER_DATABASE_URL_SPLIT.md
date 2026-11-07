@@ -40,9 +40,17 @@ Run on the VPS as the deploy user, from `/opt/atlas`. Never print the value.
    ```
 
 3. Recreate only the backend so its environment no longer carries the
-   variable: `docker compose up -d --force-recreate --no-deps backend`.
+   variable. Pass the monitoring URLs that `deploy.sh` normally exports, or
+   the Observability Center loses Prometheus and Alertmanager until the next
+   deploy (this happened on 7 Nov 2026):
+
+   ```bash
+   OBS_PROMETHEUS_URL=http://prometheus:9090 OBS_ALERTMANAGER_URL=http://alertmanager:9093 \
+     docker compose up -d --force-recreate --no-deps backend
+   ```
 4. Verify:
    - `docker compose exec -T backend sh -c 'test -z "$DATABASE_URL" && echo absent'` prints `absent`;
+   - `docker compose exec -T backend sh -c 'test -n "$PROMETHEUS_URL" && test -n "$ALERTMANAGER_URL" && echo urls-ok'` prints `urls-ok` (when monitoring is enabled);
    - `docker compose ps backend` shows it healthy (the container healthcheck hits `/health`), and one sign-in works;
    - the next deploy with a pending migration applies it. To check without
      one, `bash deploy.sh --preflight` must still read the migration state.
@@ -70,5 +78,6 @@ Append the line back to `.env` and recreate the backend:
 
 ```bash
 cat .env.migrate >> .env
-docker compose up -d --force-recreate --no-deps backend
+OBS_PROMETHEUS_URL=http://prometheus:9090 OBS_ALERTMANAGER_URL=http://alertmanager:9093 \
+  docker compose up -d --force-recreate --no-deps backend
 ```
