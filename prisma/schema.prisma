@@ -1167,6 +1167,10 @@ model AddOn {
   key                String             @unique
   name               String
   description        String?
+  /// Optional Arabic name and description, set by a Platform Owner; the
+  /// English `name`/`description` are the fallback in the Arabic UI.
+  nameAr             String?            @map("name_ar")
+  descriptionAr      String?            @map("description_ar")
   /// Mirrors the `AddOnLimitEffect`/`AddOnFeatureEffect` discriminated
   /// union (`{type: 'limit', limitKey, amount}` or `{type: 'feature',
   /// featureKey}`) — validated server-side, not schema-enforced.
@@ -4571,6 +4575,10 @@ model PaymentMethod {
   type               PaymentMethodType
   displayName        String            @map("display_name")
   description        String?
+  /// Optional Arabic display name and description, entered by a Platform
+  /// Owner; the English ones are required and are the fallback.
+  displayNameAr      String?           @map("display_name_ar")
+  descriptionAr      String?           @map("description_ar")
   enabled            Boolean           @default(true)
   /// Matches `Payment.provider`/`CheckoutPaymentMethod.provider` — `'atlas_manual'` for both manual methods today.
   provider           String

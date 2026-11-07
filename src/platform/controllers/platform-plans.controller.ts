@@ -37,6 +37,8 @@ import type { PlanLimitImpactResponse } from '../services/platform-plans.service
 import { PlanHistoryService } from '../services/plan-history.service';
 import type { PlanHistoryEntryResponse } from '../services/plan-history.service';
 import { ArchivePlanDto, CreatePlanDto, UpdatePlanDto } from '../dto/update-plan.dto';
+import { PreviewPlanNoticeDto } from '../dto/preview-plan-notice.dto';
+import type { PlanChangeNoticePreview } from '../services/plan-change-notice.service';
 import { PreviewPlanLimitsDto } from '../dto/preview-plan-limits.dto';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
@@ -91,6 +93,22 @@ export class PlatformPlansController {
     @Body() body: PreviewPlanLimitsDto,
   ): Promise<PlanLimitImpactResponse> {
     return this.platformPlansService.previewLimitImpact(auth.userId, key, body.limits);
+  }
+
+  /**
+   * B8 (UX audit) V08 — how many organizations a proposed price or limit
+   * change will email, shown in the editor's confirmation before saving.
+   * A dry run (200, writes nothing); a POST only because the proposal
+   * travels in a body.
+   */
+  @Post(':key/notice-preview')
+  @HttpCode(HttpStatus.OK)
+  async previewNotice(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('key') key: string,
+    @Body() body: PreviewPlanNoticeDto,
+  ): Promise<PlanChangeNoticePreview> {
+    return this.platformPlansService.previewNotice(auth.userId, key, body);
   }
 
   /**

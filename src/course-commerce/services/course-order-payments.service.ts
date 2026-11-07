@@ -119,6 +119,9 @@ const NON_TERMINAL_PAYMENT_STATUSES = new Set([
   'requires_confirmation',
 ]);
 
+/** An order's payment attempts listed at most (an order rarely has more than two or three). */
+const MAX_ORDER_PAYMENTS_LISTED = 50;
+
 @Injectable()
 export class CourseOrderPaymentsService {
   constructor(
@@ -624,6 +627,28 @@ export class CourseOrderPaymentsService {
       created.id,
     );
     return toCourseOrderPaymentResponse(withRelations!);
+  }
+
+  /**
+   * B7 (UX audit) V12 — the buyer's payments for their OWN order, newest
+   * first. The order is resolved for this buyer first (`findOrderOrThrow`),
+   * so someone else's order id answers 404 — the same as a missing one,
+   * never a 403 that would confirm it exists.
+   */
+  async listPayments(
+    studentId: string,
+    orderId: string,
+  ): Promise<CourseOrderPaymentResponse[]> {
+    return this.tenancyContextService.runInUserContext(studentId, async (tx) => {
+      await this.courseOrdersService.findOrderOrThrow(tx, studentId, orderId);
+      const payments = await this.paymentsRepository.findManyForCourseOrder(
+        tx,
+        orderId,
+        studentId,
+        MAX_ORDER_PAYMENTS_LISTED,
+      );
+      return payments.map((payment) => toCourseOrderPaymentResponse(payment));
+    });
   }
 
   async getPayment(

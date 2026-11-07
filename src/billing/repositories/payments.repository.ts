@@ -72,6 +72,36 @@ export type PaymentWithCourseReviewContext = Prisma.PaymentGetPayload<{
   include: typeof WITH_COURSE_REVIEW_CONTEXT;
 }>;
 
+/**
+ * B8 (UX audit) V01 — the latest review decision and WHO made it, by name
+ * (never the email), for the Platform detail reads only (never the lists).
+ * Readable through `payment_reviews_platform_review_select`; the reviewer's
+ * `users` row through `users_context_select`.
+ */
+const WITH_LATEST_REVIEW = {
+  reviews: {
+    orderBy: { reviewedAt: 'desc' },
+    take: 1,
+    select: {
+      status: true,
+      reviewedAt: true,
+      reviewer: { select: { name: true } },
+    },
+  },
+} satisfies Prisma.PaymentInclude;
+
+export type LatestPaymentReview = Prisma.PaymentGetPayload<{
+  include: typeof WITH_LATEST_REVIEW;
+}>['reviews'][number];
+
+export type PaymentWithSubscriptionReviewDetail = PaymentWithSubscriptionReviewContext & {
+  readonly reviews: LatestPaymentReview[];
+};
+
+export type PaymentWithCourseReviewDetail = PaymentWithCourseReviewContext & {
+  readonly reviews: LatestPaymentReview[];
+};
+
 /** The Platform review lists' shared filter/sort/page input. */
 export interface PlatformPaymentListFilter {
   readonly search?: string;
@@ -258,10 +288,10 @@ export class PaymentsRepository {
   findByIdAnyOrganizationWithSubscriptionContext(
     tx: Prisma.TransactionClient,
     id: string,
-  ): Promise<PaymentWithSubscriptionReviewContext | null> {
+  ): Promise<PaymentWithSubscriptionReviewDetail | null> {
     return tx.payment.findFirst({
       where: { id },
-      include: WITH_SUBSCRIPTION_REVIEW_CONTEXT,
+      include: { ...WITH_SUBSCRIPTION_REVIEW_CONTEXT, ...WITH_LATEST_REVIEW },
     });
   }
 
@@ -269,10 +299,10 @@ export class PaymentsRepository {
   findByIdAnyOrganizationWithCourseContext(
     tx: Prisma.TransactionClient,
     id: string,
-  ): Promise<PaymentWithCourseReviewContext | null> {
+  ): Promise<PaymentWithCourseReviewDetail | null> {
     return tx.payment.findFirst({
       where: { id },
-      include: WITH_COURSE_REVIEW_CONTEXT,
+      include: { ...WITH_COURSE_REVIEW_CONTEXT, ...WITH_LATEST_REVIEW },
     });
   }
 
@@ -444,6 +474,27 @@ export class PaymentsRepository {
       data: { reviewStatus, reviewNotes },
     });
     return result.count === 1;
+  }
+
+  /**
+   * B7 (UX audit) V12 — every Payment the buyer made toward one CourseOrder,
+   * newest first, so a checkout opened in a new tab can resume at the right
+   * step. Scoped to the payer as well as the order (an application-layer
+   * check on top of the buyer-self RLS policies, never the only boundary).
+   * An order has a handful of attempts at most; `take` bounds it anyway.
+   */
+  findManyForCourseOrder(
+    tx: Prisma.TransactionClient,
+    courseOrderId: string,
+    payerUserId: string,
+    take: number,
+  ): Promise<PaymentWithRelations[]> {
+    return tx.payment.findMany({
+      where: { courseOrderId, payerUserId },
+      include: WITH_RELATIONS,
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
   }
 
   /** Phase P13 — the succeeded Payment for a CourseOrder, if one exists. A CourseOrder may have more than one Payment row (retried attempts after an earlier failure/rejection, mirroring `Checkout`'s own precedent) — this resolves the one that actually succeeded, needed by `CourseOrderRefundsService` to attach a refund to the correct Payment. */

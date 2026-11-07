@@ -23,6 +23,7 @@ import type { AuthContext } from '../../identity/guards/jwt-auth.guard';
 import { PlatformAddOnsService } from '../services/platform-add-ons.service';
 import { PlatformAddOnQueryDto } from '../dto/platform-add-on-query.dto';
 import { UpdateAddOnCatalogStatusDto } from '../dto/update-add-on-catalog-status.dto';
+import { UpdateAddOnArabicTextDto } from '../dto/update-add-on-arabic-text.dto';
 import type {
   PlatformAddOnListResponse,
   PlatformAddOnRow,
@@ -48,5 +49,15 @@ export class PlatformAddOnsController {
     @Body() payload: UpdateAddOnCatalogStatusDto,
   ): Promise<PlatformAddOnRow> {
     return this.platformAddOnsService.updateCatalogStatus(auth.userId, key, payload);
+  }
+
+  /** B5 (UX audit) V21 — the add-on's Arabic name and description (blank clears). */
+  @Patch(':key/arabic-text')
+  async updateArabicText(
+    @CurrentAuthContext() auth: AuthContext,
+    @Param('key') key: string,
+    @Body() payload: UpdateAddOnArabicTextDto,
+  ): Promise<PlatformAddOnRow> {
+    return this.platformAddOnsService.updateArabicText(auth.userId, key, payload);
   }
 }

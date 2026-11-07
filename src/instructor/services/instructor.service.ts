@@ -58,6 +58,10 @@ import type {
 import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
+import type {
+  AssignmentSubmissionListQueryDto,
+  QuizAttemptListQueryDto,
+} from '../dto/instructor-list-query.dto';
 import type { CollectionQueryDto } from '../../common/dto/collection-query.dto';
 import type { GradeSubmissionDto } from '../dto/grade-submission.dto';
 import type { Prisma } from '@prisma/client';
@@ -442,7 +446,7 @@ export class InstructorService {
     userId: string,
     courseId: string,
     quizId: string,
-    query?: CollectionQueryDto,
+    query?: QuizAttemptListQueryDto,
   ): Promise<PaginatedResult<QuizAttemptSummaryResponse>> {
     const { skip, take, page, pageSize } = paginationOf(query);
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
@@ -456,6 +460,11 @@ export class InstructorService {
         await this.instructorRepository.findQuizAttemptsForQuiz(tx, quizId, {
           skip,
           take,
+          status: query?.status,
+          gradingStatus: query?.gradingStatus,
+          flagged: query?.flagged,
+          late: query?.late,
+          search: query?.search,
         });
 
       return {
@@ -471,7 +480,7 @@ export class InstructorService {
     userId: string,
     courseId: string,
     assignmentId: string,
-    query?: CollectionQueryDto,
+    query?: AssignmentSubmissionListQueryDto,
   ): Promise<PaginatedResult<AssignmentSubmissionReviewResponse>> {
     const { skip, take, page, pageSize } = paginationOf(query);
     return this.tenancyContextService.runInUserContext(userId, async (tx) => {
@@ -488,6 +497,9 @@ export class InstructorService {
         await this.instructorRepository.findSubmissionsForAssignment(tx, assignmentId, {
           skip,
           take,
+          gradingStatus: query?.gradingStatus,
+          late: query?.late,
+          search: query?.search,
         });
 
       return {

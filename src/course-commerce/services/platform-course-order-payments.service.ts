@@ -65,6 +65,7 @@ import type { PlatformPaymentListQueryDto } from '../../billing/dto/payment-list
 import {
   toPlatformCourseOrderPaymentDetailResponse,
   toPlatformCourseOrderPaymentListItemResponse,
+  type PlatformCourseOrderPaymentDetailResponse,
   type PlatformCourseOrderPaymentResponse,
 } from '../dto/platform-course-order-payment-list.contract';
 
@@ -123,7 +124,7 @@ export class PlatformCourseOrderPaymentsService {
   async getPayment(
     reviewerId: string,
     paymentId: string,
-  ): Promise<PlatformCourseOrderPaymentResponse> {
+  ): Promise<PlatformCourseOrderPaymentDetailResponse> {
     const payment = await this.tenancyContextService.runInUserContext(reviewerId, (tx) =>
       this.paymentsRepository.findByIdAnyOrganizationWithCourseContext(tx, paymentId),
     );

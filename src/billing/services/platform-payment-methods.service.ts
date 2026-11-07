@@ -122,6 +122,8 @@ export class PlatformPaymentMethodsService {
     payload: {
       readonly displayName: string;
       readonly description?: string;
+      readonly displayNameAr?: string;
+      readonly descriptionAr?: string;
       readonly enabled?: boolean;
       readonly displayOrder?: number;
     },
@@ -140,6 +142,8 @@ export class PlatformPaymentMethodsService {
         provider: 'atlas_manual',
         displayName,
         description: trimmed(payload.description) ?? null,
+        displayNameAr: trimmed(payload.displayNameAr) ?? null,
+        descriptionAr: trimmed(payload.descriptionAr) ?? null,
         enabled: payload.enabled ?? false,
         displayOrder: payload.displayOrder ?? 0,
         capabilities: MANUAL_TRANSFER_CAPABILITIES,
@@ -218,6 +222,14 @@ export class PlatformPaymentMethodsService {
         : {}),
       ...(payload.description !== undefined
         ? { description: trimmed(payload.description) ?? null }
+        : {}),
+      // Optional Arabic texts: an empty value clears them (the English one
+      // shows again).
+      ...(payload.displayNameAr !== undefined
+        ? { displayNameAr: trimmed(payload.displayNameAr) ?? null }
+        : {}),
+      ...(payload.descriptionAr !== undefined
+        ? { descriptionAr: trimmed(payload.descriptionAr) ?? null }
         : {}),
       ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {}),
       ...(payload.displayOrder !== undefined

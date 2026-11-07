@@ -64,6 +64,9 @@ export interface PaymentMethodResponse {
   readonly type: PrismaPaymentMethod['type'];
   readonly displayName: string;
   readonly description?: string;
+  /** B5/B8 (UX audit) — the Arabic name and description, when a Platform Owner entered them; the English ones are the fallback. */
+  readonly displayNameAr?: string;
+  readonly descriptionAr?: string;
   readonly enabled: boolean;
   readonly provider: string;
   readonly capabilities: PaymentMethodCapabilitiesResponse;
@@ -79,6 +82,8 @@ export function toPaymentMethodResponse(
     type: method.type,
     displayName: method.displayName,
     description: method.description ?? undefined,
+    displayNameAr: method.displayNameAr ?? undefined,
+    descriptionAr: method.descriptionAr ?? undefined,
     enabled: method.enabled,
     provider: method.provider,
     capabilities: method.capabilities as unknown as PaymentMethodCapabilitiesResponse,

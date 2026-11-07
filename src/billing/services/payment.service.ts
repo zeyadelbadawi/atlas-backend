@@ -324,6 +324,7 @@ export class PaymentService {
           storageKey,
           mimeType: kind.mimeType,
           note: payload.note,
+          payerReference: payload.payerReference?.trim() || null,
         });
 
         await this.paymentsRepository.update(tx, paymentId, {

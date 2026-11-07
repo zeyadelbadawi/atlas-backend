@@ -37,6 +37,10 @@ import type {
   QuizStudentOverrideResponse,
 } from '../dto/quiz-review.contract';
 import { CollectionQueryDto } from '../../common/dto/collection-query.dto';
+import {
+  AssignmentSubmissionListQueryDto,
+  QuizAttemptListQueryDto,
+} from '../dto/instructor-list-query.dto';
 import type {
   AssignmentSubmissionReviewResponse,
   InstructorCourseOverviewResponse,
@@ -118,7 +122,7 @@ export class InstructorController {
     @Req() request: Request,
     @Param('id') courseId: string,
     @Param('quizId') quizId: string,
-    @Query() query: CollectionQueryDto,
+    @Query() query: QuizAttemptListQueryDto,
   ): Promise<PaginatedResult<QuizAttemptSummaryResponse>> {
     return this.instructorService.getQuizAttempts(
       request.authContext!.userId,
@@ -133,7 +137,7 @@ export class InstructorController {
     @Req() request: Request,
     @Param('id') courseId: string,
     @Param('assignmentId') assignmentId: string,
-    @Query() query: CollectionQueryDto,
+    @Query() query: AssignmentSubmissionListQueryDto,
   ): Promise<PaginatedResult<AssignmentSubmissionReviewResponse>> {
     return this.instructorService.getAssignmentSubmissions(
       request.authContext!.userId,

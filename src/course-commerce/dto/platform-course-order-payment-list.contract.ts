@@ -13,7 +13,14 @@
  * the commission is the Platform's own figure.
  */
 import type { CourseOrderRefund, CourseOrder } from '@prisma/client';
-import type { PaymentWithCourseReviewContext } from '../../billing/repositories/payments.repository';
+import type {
+  PaymentWithCourseReviewContext,
+  PaymentWithCourseReviewDetail,
+} from '../../billing/repositories/payments.repository';
+import {
+  toPaymentReviewSummary,
+  type PaymentReviewSummaryResponse,
+} from '../../billing/dto/payment-review-summary.contract';
 import {
   toCourseOrderPaymentResponse,
   type CourseOrderPaymentResponse,
@@ -28,6 +35,12 @@ export interface PlatformCourseOrderPaymentReviewContext {
 
 export type PlatformCourseOrderPaymentResponse = CourseOrderPaymentResponse &
   PlatformCourseOrderPaymentReviewContext;
+
+/** The detail adds the latest review decision and who made it (B8 (UX audit) V01). */
+export type PlatformCourseOrderPaymentDetailResponse =
+  PlatformCourseOrderPaymentResponse & {
+    readonly review?: PaymentReviewSummaryResponse;
+  };
 
 function toReviewContext(
   payment: PaymentWithCourseReviewContext,
@@ -66,7 +79,11 @@ export function toPlatformCourseOrderPaymentListItemResponse(
 }
 
 export function toPlatformCourseOrderPaymentDetailResponse(
-  payment: PaymentWithCourseReviewContext,
-): PlatformCourseOrderPaymentResponse {
-  return { ...toCourseOrderPaymentResponse(payment), ...toReviewContext(payment) };
+  payment: PaymentWithCourseReviewDetail,
+): PlatformCourseOrderPaymentDetailResponse {
+  return {
+    ...toCourseOrderPaymentResponse(payment),
+    ...toReviewContext(payment),
+    review: toPaymentReviewSummary(payment.reviews),
+  };
 }

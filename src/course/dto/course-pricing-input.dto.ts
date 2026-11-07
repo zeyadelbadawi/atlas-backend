@@ -6,9 +6,23 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Max,
   ValidateIf,
 } from 'class-validator';
+import { withViolation } from '../../common/validation/violation-message';
 import { COURSE_PRICING_TYPE_VALUES } from './course.constants';
+
+/**
+ * B3 (UX audit) — the highest price a course can be given, in the course's
+ * currency: the same maximum the dashboard's price field enforces
+ * (`MAX_COURSE_PRICE`, atlas `price-input.utils.ts`). Above it the field
+ * gets the frontend's own message, with the maximum written the way the
+ * form writes it.
+ */
+export const MAX_COURSE_PRICE = 1_000_000;
+const PRICE_TOO_HIGH = withViolation('course:validation.priceTooHigh', {
+  max: MAX_COURSE_PRICE.toLocaleString('en-US'),
+});
 
 export class CoursePricingInputDto {
   @IsNotEmpty()
@@ -25,6 +39,7 @@ export class CoursePricingInputDto {
   @ValidateIf((o: CoursePricingInputDto) => o.type === 'paid')
   @IsNumber()
   @IsPositive()
+  @Max(MAX_COURSE_PRICE, PRICE_TOO_HIGH)
   readonly amount?: number;
 
   // D5-3 — optional: a paid price sent without one keeps the course's

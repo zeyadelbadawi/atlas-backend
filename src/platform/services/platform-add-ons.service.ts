@@ -32,6 +32,7 @@ import { buildPaginationMeta } from '../../common/dto/pagination.contract';
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE } from '../../common/dto/collection-query.dto';
 import type { PlatformAddOnQueryDto } from '../dto/platform-add-on-query.dto';
 import type { UpdateAddOnCatalogStatusDto } from '../dto/update-add-on-catalog-status.dto';
+import type { UpdateAddOnArabicTextDto } from '../dto/update-add-on-arabic-text.dto';
 import type {
   PlatformAddOnListResponse,
   PlatformAddOnRow,
@@ -143,6 +144,60 @@ export class PlatformAddOnsService {
     });
   }
 
+  /**
+   * B5 (UX audit) V21 — the add-on's Arabic name and description.
+   *
+   * Version-guarded and audited exactly like the status change above (one
+   * `add_on.arabic_text_changed` row, in the same transaction, naming the
+   * fields that changed — the texts themselves are in the row). A blank
+   * value is stored as NULL: the English text is shown instead.
+   */
+  async updateArabicText(
+    platformOwnerId: string,
+    key: string,
+    payload: UpdateAddOnArabicTextDto,
+  ): Promise<PlatformAddOnRow> {
+    const nameAr = payload.nameAr.trim() || null;
+    const descriptionAr = payload.descriptionAr.trim() || null;
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.addOn.findUnique({ where: { key } });
+      if (!existing) {
+        throw new NotFoundException({ messageKey: 'errors.notFound' });
+      }
+
+      const result = await tx.addOn.updateMany({
+        where: { id: existing.id, version: payload.expectedVersion },
+        data: { nameAr, descriptionAr, version: { increment: 1 } },
+      });
+      if (result.count === 0) {
+        const current = await tx.addOn.findUnique({ where: { id: existing.id } });
+        throw new StaleResourceVersionException({
+          submittedVersion: payload.expectedVersion,
+          currentVersion: current?.version ?? payload.expectedVersion,
+          lastEditedAt: current?.updatedAt.toISOString(),
+        });
+      }
+
+      const updated = await tx.addOn.findUnique({ where: { id: existing.id } });
+      const fields = [
+        existing.nameAr !== nameAr ? 'nameAr' : null,
+        existing.descriptionAr !== descriptionAr ? 'descriptionAr' : null,
+      ].filter((field): field is string => field !== null);
+      await this.auditLogWriterService.write(tx, {
+        actorUserId: platformOwnerId,
+        role: 'platform_owner',
+        action: 'add_on.arabic_text_changed',
+        targetType: 'add_on',
+        targetId: existing.id,
+        targetLabel: existing.name,
+        context: { addOnKey: existing.key, fields: fields.join(',') },
+      });
+
+      const counts = (await this.countsByAddOnId(platformOwnerId)).get(existing.id);
+      return this.toRow(updated ?? existing, counts);
+    });
+  }
+
   /** Per-add-on install/enabled counts, aggregated across tenants in platform context. */
   private async countsByAddOnId(
     platformOwnerId: string,
@@ -176,7 +231,12 @@ export class PlatformAddOnsService {
         return false;
       }
       if (search) {
-        const haystack = [addOn.name, addOn.key, addOn.description ?? '']
+        const haystack = [
+          addOn.name,
+          addOn.key,
+          addOn.description ?? '',
+          addOn.nameAr ?? '',
+        ]
           .join(' ')
           .toLowerCase();
         if (!haystack.includes(search)) {
@@ -211,6 +271,8 @@ export class PlatformAddOnsService {
       key: addOn.key,
       name: addOn.name,
       description: addOn.description,
+      nameAr: addOn.nameAr,
+      descriptionAr: addOn.descriptionAr,
       catalogStatus: addOn.catalogStatus,
       installCount: counts?.install ?? 0,
       enabledCount: counts?.enabled ?? 0,

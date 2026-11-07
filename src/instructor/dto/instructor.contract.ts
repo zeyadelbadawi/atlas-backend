@@ -118,6 +118,8 @@ export interface GradeResponse {
   readonly feedback?: string;
   readonly gradedAt?: string;
   readonly gradedBy?: string;
+  /** B6 (UX audit) V06 — the grader's display name (never the email); absent if the account no longer exists. */
+  readonly gradedByName?: string;
 }
 
 export interface AssignmentSubmissionReviewResponse {
@@ -145,7 +147,9 @@ export interface AssignmentSubmissionReviewResponse {
 }
 
 export function toAssignmentSubmissionReviewResponse(
-  submission: PrismaAssignmentSubmission,
+  submission: PrismaAssignmentSubmission & {
+    readonly grader?: { readonly name: string } | null;
+  },
   studentName: string,
   attachment?: AssignmentSubmissionReviewResponse['attachment'],
 ): AssignmentSubmissionReviewResponse {
@@ -169,6 +173,7 @@ export function toAssignmentSubmissionReviewResponse(
           feedback: submission.feedback ?? undefined,
           gradedAt: submission.gradedAt?.toISOString(),
           gradedBy: submission.gradedBy ?? undefined,
+          gradedByName: submission.grader?.name ?? undefined,
         }
       : undefined,
   };

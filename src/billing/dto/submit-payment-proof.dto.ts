@@ -9,7 +9,10 @@
  * submitProof` (mirrors `MediaService.upload`'s doc comment verbatim).
  */
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { MAX_PAYMENT_PROOF_NOTE_LENGTH } from './billing.constants';
+import {
+  MAX_PAYER_REFERENCE_LENGTH,
+  MAX_PAYMENT_PROOF_NOTE_LENGTH,
+} from './billing.constants';
 
 export class SubmitPaymentProofDto {
   @IsNotEmpty()
@@ -30,4 +33,16 @@ export class SubmitPaymentProofDto {
   @IsString()
   @MaxLength(MAX_PAYMENT_PROOF_NOTE_LENGTH)
   readonly note?: string;
+
+  /**
+   * B8 (UX audit) — the transfer's reference / transaction number as the
+   * payer's bank or wallet shows it. Optional; same rule as a course-order
+   * proof (`SubmitCourseOrderPaymentProofDto.payerReference`), stored on the
+   * same `payment_proofs.payer_reference` column and matched by the Platform
+   * review search.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_PAYER_REFERENCE_LENGTH)
+  readonly payerReference?: string;
 }
