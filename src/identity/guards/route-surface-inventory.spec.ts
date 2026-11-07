@@ -226,6 +226,12 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/websites/host/robots.txt': 'crawler rules for a published academy host',
   'GET public/websites/host/sitemap.xml':
     'published pages and courses of an academy host',
+  // SEO/AEO/GEO pass — AI-assistant summaries and the IndexNow key file.
+  'GET public/websites/host/llms.txt': 'published pages and courses of an academy host',
+  'GET public/websites/host/llms-full.txt':
+    'published page text, FAQs and courses of an academy host',
+  'GET public/websites/host/indexnow-key.txt':
+    'derived IndexNow ownership key of a published academy host',
   'GET public/websites/:academyId': 'published website only',
   'GET public/websites/:academyId/identity': 'published identity only',
   'GET public/websites/:academyId/pages': 'published pages only',
@@ -243,6 +249,10 @@ const PUBLIC_ROUTES: Readonly<Record<string, string>> = {
   'GET public/websites/:academyId/favicon':
     'inline bytes or own-media redirect only (W2)',
   'GET public/websites/:academyId/logo': 'bounded PNG of the academy logo for emails',
+  'GET public/websites/:academyId/og-image.png':
+    'generated share card: academy name on its public brand colour',
+  'GET public/websites/:academyId/icon.png':
+    'generated monogram: first letter of the name on its brand colour',
   'POST public/websites/:academyId/contact': 'visitor contact form; rate-limited',
   'GET public/media/academies/:academyId/:fileName':
     'published/public-tier assets, or a signed link (W1)',

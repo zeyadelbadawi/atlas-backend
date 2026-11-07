@@ -30,6 +30,8 @@ import { CourseModule } from '../course/course.module';
 import { PublicWebsiteController } from './controllers/public-website.controller';
 import { PublicWebsiteService } from './services/public-website.service';
 import { PublicWebsiteCacheService } from './services/public-website-cache.service';
+import { BrandImagesService } from './services/brand-images.service';
+import { IndexNowService } from './services/index-now.service';
 import { PublicHostnameResolutionRepository } from './repositories/public-hostname-resolution.repository';
 import { CourseReviewsRepository } from '../learning/repositories/course-reviews.repository';
 import { PlansModule } from '../plans/plans.module';
@@ -48,6 +50,9 @@ import { PlansModule } from '../plans/plans.module';
     PublicWebsiteService,
     PublicWebsiteCacheService,
     PublicHostnameResolutionRepository,
+    // SEO/AEO/GEO pass — generated share card + monogram, IndexNow.
+    BrandImagesService,
+    IndexNowService,
     // P64 Phase 4 — the public approved-reviews list + rating summary read
     // through this stateless repository (also provided in LearningModule for
     // the authenticated surface; a repository holds no state, so a second

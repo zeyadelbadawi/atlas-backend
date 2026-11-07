@@ -67,7 +67,17 @@ function withLocalePrefix(
   locale: PublicWebsiteLocale,
   defaultLocale: PublicWebsiteLocale,
 ): string {
-  return `${localePathPrefix(locale, defaultLocale)}${path}`;
+  const prefix = localePathPrefix(locale, defaultLocale);
+  // A prefixed locale's home is the bare prefix (`/ar`), as the sitemap lists it.
+  if (prefix && path === '/') return prefix;
+  return `${prefix}${path}`;
+}
+
+/** The page's public path (`publicPagePath` in `seo-files.util.ts`): Home is `/`, a core page `/<coreType>`, a custom page `/<slug>` — never `/home`, a duplicate of `/`. */
+function defaultCanonicalPath(page: WebsitePageInput): string {
+  if (page.coreType === 'home') return '/';
+  if (page.coreType && page.coreType !== 'courseDetails') return `/${page.coreType}`;
+  return `/${page.slug}`;
 }
 
 function buildHreflangAlternates(
@@ -109,7 +119,7 @@ export function resolvePageSeo(
       ? 'global'
       : 'fallback';
 
-  const canonicalPath = page.seo.canonicalPath || `/${page.slug}`;
+  const canonicalPath = page.seo.canonicalPath || defaultCanonicalPath(page);
 
   return {
     title,

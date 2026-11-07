@@ -288,6 +288,22 @@ export interface LearningLeaseConfig {
   readonly heartbeatSeconds: number;
 }
 
+/**
+ * SEO/AEO/GEO pass (Nov 2026) — IndexNow (https://www.indexnow.org): when
+ * an Academy's published website or courses change, their URLs are sent to
+ * the shared IndexNow endpoint (Bing, Yandex, Seznam, Naver, Yep...), so
+ * those engines — and the answer engines built on Bing — recrawl them at
+ * once instead of at their next scheduled visit. On by default; each
+ * Academy's key is derived from `keySecret` (never stored, served at
+ * `/indexnow-key.txt` on its own host). `INDEXNOW=off` stops every
+ * submission without a deploy.
+ */
+export interface IndexNowConfig {
+  readonly enabled: boolean;
+  /** `INDEXNOW_KEY_SECRET`, else the access-token secret (domain-separated HMAC, so nothing about it leaks). */
+  readonly keySecret?: string;
+}
+
 export interface CloudflareConfig {
   readonly apiToken?: string;
   readonly zoneId?: string;
@@ -927,6 +943,11 @@ export default () => {
     cachePurgeToken: env.CLOUDFLARE_CACHE_PURGE_TOKEN || undefined,
   };
 
+  const indexNow: IndexNowConfig = {
+    enabled: env.INDEXNOW !== 'off',
+    keySecret: env.INDEXNOW_KEY_SECRET || env.JWT_ACCESS_SECRET || undefined,
+  };
+
   const billing: BillingConfig = {
     webhookSecret: env.PAYMENT_WEBHOOK_SECRET,
   };
@@ -1037,6 +1058,7 @@ export default () => {
     platformDomain,
     surfaceEnforcement,
     cloudflare,
+    indexNow,
     zoom,
     googleAuth,
     billing,

@@ -47,7 +47,48 @@ describe('buildSitemapUrls', () => {
   });
 });
 
+describe('buildSitemapUrls — lastmod', () => {
+  it('dates a page by the later of its own change and the site’s last publish', () => {
+    const urls = buildSitemapUrls(
+      [
+        page({ coreType: 'home', slug: 'home', updatedAt: '2026-10-01T00:00:00.000Z' }),
+        page({ coreType: 'about', slug: 'about', updatedAt: '2026-12-01T00:00:00.000Z' }),
+      ],
+      [
+        {
+          slug: 'c',
+          status: 'published',
+          visibility: 'public',
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+      '2026-11-01T00:00:00.000Z',
+    );
+    expect(urls.map((u) => u.lastModified)).toEqual([
+      '2026-11-01T00:00:00.000Z',
+      '2026-12-01T00:00:00.000Z',
+      // A course's own change only: a site publish does not change it.
+      '2026-09-01T00:00:00.000Z',
+    ]);
+  });
+});
+
 describe('buildRobotsTxt', () => {
+  it('names llms.txt in a comment only when indexable', () => {
+    expect(
+      buildRobotsTxt({
+        indexable: true,
+        sitemapUrl: 'https://a.example/sitemap.xml',
+        llmsTxtUrl: 'https://a.example/llms.txt',
+      }),
+    ).toBe(
+      'User-agent: *\nAllow: /\n\nSitemap: https://a.example/sitemap.xml\n\n# A summary of this site for AI assistants: https://a.example/llms.txt\n',
+    );
+    expect(
+      buildRobotsTxt({ indexable: false, llmsTxtUrl: 'https://a.example/llms.txt' }),
+    ).toBe('User-agent: *\nDisallow: /\n');
+  });
+
   it('allows and links the sitemap when indexable', () => {
     expect(
       buildRobotsTxt({ indexable: true, sitemapUrl: 'https://a.example/sitemap.xml' }),
@@ -86,33 +127,71 @@ describe('buildSitemapXml — B0-WEB-02 default locale', () => {
     { path: '/about', lastModified: 't1', changeFrequency: 'monthly', priority: 0.6 },
   ] as const;
 
-  // The exact bytes an English-default site was served before B0-WEB-02.
+  const entry = (
+    loc: string,
+    en: string,
+    ar: string,
+    xDefault: string,
+    t: string,
+    freq: string,
+    priority: string,
+  ) => [
+    '  <url>',
+    `    <loc>${loc}</loc>`,
+    `    <xhtml:link rel="alternate" hreflang="en" href="${en}"/>`,
+    `    <xhtml:link rel="alternate" hreflang="ar" href="${ar}"/>`,
+    `    <xhtml:link rel="alternate" hreflang="x-default" href="${xDefault}"/>`,
+    `    <lastmod>${t}</lastmod>`,
+    `    <changefreq>${freq}</changefreq>`,
+    `    <priority>${priority}</priority>`,
+    '  </url>',
+  ];
+  // Every language version is a <url> of its own (Google: one <url> per
+  // URL, each listing all variants) — the default language's first.
   const ENGLISH_DEFAULT = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
-    '  <url>',
-    '    <loc>https://a.example/</loc>',
-    '    <xhtml:link rel="alternate" hreflang="en" href="https://a.example/"/>',
-    '    <xhtml:link rel="alternate" hreflang="ar" href="https://a.example/ar"/>',
-    '    <xhtml:link rel="alternate" hreflang="x-default" href="https://a.example/"/>',
-    '    <lastmod>t0</lastmod>',
-    '    <changefreq>weekly</changefreq>',
-    '    <priority>1.0</priority>',
-    '  </url>',
-    '  <url>',
-    '    <loc>https://a.example/about</loc>',
-    '    <xhtml:link rel="alternate" hreflang="en" href="https://a.example/about"/>',
-    '    <xhtml:link rel="alternate" hreflang="ar" href="https://a.example/ar/about"/>',
-    '    <xhtml:link rel="alternate" hreflang="x-default" href="https://a.example/about"/>',
-    '    <lastmod>t1</lastmod>',
-    '    <changefreq>monthly</changefreq>',
-    '    <priority>0.6</priority>',
-    '  </url>',
+    ...entry(
+      'https://a.example/',
+      'https://a.example/',
+      'https://a.example/ar',
+      'https://a.example/',
+      't0',
+      'weekly',
+      '1.0',
+    ),
+    ...entry(
+      'https://a.example/ar',
+      'https://a.example/',
+      'https://a.example/ar',
+      'https://a.example/',
+      't0',
+      'weekly',
+      '1.0',
+    ),
+    ...entry(
+      'https://a.example/about',
+      'https://a.example/about',
+      'https://a.example/ar/about',
+      'https://a.example/about',
+      't1',
+      'monthly',
+      '0.6',
+    ),
+    ...entry(
+      'https://a.example/ar/about',
+      'https://a.example/about',
+      'https://a.example/ar/about',
+      'https://a.example/about',
+      't1',
+      'monthly',
+      '0.6',
+    ),
     '</urlset>',
     '',
   ].join('\n');
 
-  it('an English-default site is byte-identical, with or without the argument', () => {
+  it('an English-default site lists both languages, with or without the argument', () => {
     expect(buildSitemapXml(urls, 'https://a.example')).toBe(ENGLISH_DEFAULT);
     expect(buildSitemapXml(urls, 'https://a.example', 'en')).toBe(ENGLISH_DEFAULT);
   });
@@ -124,6 +203,7 @@ describe('buildSitemapXml — B0-WEB-02 default locale', () => {
     expect(xml).toContain('hreflang="en" href="https://a.example/en"');
     expect(xml).toContain('hreflang="x-default" href="https://a.example/"');
     expect(xml).toContain('<loc>https://a.example/about</loc>');
+    expect(xml).toContain('<loc>https://a.example/en/about</loc>');
     expect(xml).toContain('hreflang="en" href="https://a.example/en/about"');
     expect(xml).toContain('hreflang="x-default" href="https://a.example/about"');
     expect(xml).not.toContain('/ar');
@@ -141,8 +221,15 @@ describe('buildSitemapXml — B0-WEB-02 default locale', () => {
         // Both language URLs are distinct and one of them is the <loc>.
         const loc = /<loc>([^<]+)<\/loc>/.exec(block)?.[1];
         expect(new Set(alternates.map(([, href]) => href)).size).toBe(2);
-        expect(alternates.find(([locale]) => locale === defaultLocale)?.[1]).toBe(loc);
+        expect(alternates.map(([, href]) => href)).toContain(loc);
+        // x-default is always the default language's URL.
+        const xDefault = /hreflang="x-default" href="([^"]+)"/.exec(block)?.[1];
+        expect(xDefault).toBe(
+          alternates.find(([locale]) => locale === defaultLocale)?.[1],
+        );
       }
+      // Every language URL of every page is submitted.
+      expect(blocks).toHaveLength(urls.length * 2);
     }
   });
 });

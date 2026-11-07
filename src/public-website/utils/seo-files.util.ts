@@ -48,17 +48,32 @@ export interface SitemapUrl {
 }
 
 /** The public path a page is served at, or `undefined` when it is not a URL of its own. */
-export function publicPagePath(page: SeoFilePage): string | undefined {
+export function publicPagePath(
+  page: Pick<SeoFilePage, 'coreType' | 'slug'>,
+): string | undefined {
   if (page.coreType === 'home') return '/';
   if (page.coreType === 'courseDetails') return undefined;
   if (page.coreType) return `/${page.coreType}`;
   return `/${page.slug}`;
 }
 
-/** Published, visible, indexable pages and published public courses, in that order. */
+/** The later of two ISO timestamps (an absent one loses). */
+function latest(a: string, b: string | undefined): string {
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+/**
+ * Published, visible, indexable pages and published public courses, in that
+ * order. `sitePublishedAt` — the website's last publish — dates a page whose
+ * own row is older: a publish changes what every page shows (navigation,
+ * header, footer), and Bing and Google use `<lastmod>` only while it stays
+ * accurate.
+ */
 export function buildSitemapUrls(
   pages: readonly SeoFilePage[],
   courses: readonly SeoFileCourse[],
+  sitePublishedAt?: string,
 ): readonly SitemapUrl[] {
   const seen = new Set<string>();
   const urls: SitemapUrl[] = [];
@@ -69,7 +84,7 @@ export function buildSitemapUrls(
     seen.add(path);
     urls.push({
       path,
-      lastModified: page.updatedAt,
+      lastModified: latest(page.updatedAt, sitePublishedAt),
       changeFrequency: page.coreType === 'home' ? 'weekly' : 'monthly',
       priority: page.coreType === 'home' ? 1 : 0.6,
     });
@@ -89,13 +104,32 @@ export function buildSitemapUrls(
   return urls;
 }
 
-/** `Disallow: /` unless the Academy is published and allows indexing; a `Sitemap:` line only when one is served. */
+/**
+ * `Disallow: /` unless the Academy is published and allows indexing; a
+ * `Sitemap:` line only when one is served.
+ *
+ * One `User-agent: *` group on purpose (SEO/AEO/GEO pass, Nov 2026): every
+ * crawler without a group of its own follows it, so search engines
+ * (Googlebot, Bingbot, Applebot), AI search and answer crawlers
+ * (OAI-SearchBot, ChatGPT-User, PerplexityBot, Claude-SearchBot,
+ * Claude-User) and the AI-use tokens (GPTBot, ClaudeBot, Google-Extended —
+ * which also governs grounding in Gemini — Applebot-Extended) are all
+ * allowed by default. Naming each one with the same rule would change
+ * nothing. Sign-in and learner pages are not disallowed: they carry
+ * `X-Robots-Tag: noindex` (Caddyfile), which a crawler can only read if
+ * it may fetch them. `llms.txt` is linked in a comment (no robots.txt
+ * directive exists for it).
+ */
 export function buildRobotsTxt(input: {
   readonly indexable: boolean;
   readonly sitemapUrl?: string;
+  readonly llmsTxtUrl?: string;
 }): string {
   const lines = ['User-agent: *', input.indexable ? 'Allow: /' : 'Disallow: /'];
   if (input.indexable && input.sitemapUrl) lines.push('', `Sitemap: ${input.sitemapUrl}`);
+  if (input.indexable && input.llmsTxtUrl) {
+    lines.push('', `# A summary of this site for AI assistants: ${input.llmsTxtUrl}`);
+  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -121,8 +155,13 @@ export function localizedSitePath(
 
 /**
  * `origin` is the Academy's canonical origin, e.g. `https://elzozo.atlass.dpdns.org`.
- * Each `<url>` is the default-language URL with one alternate per language
- * (always `en` then `ar`, so every page's set is reciprocal) and `x-default`.
+ * Every language version of a page is a `<url>` of its own — the default
+ * language's first, then the other's (`/ar/...`, or `/en/...` on an
+ * Arabic-default site) — each listing the same alternates (always `en` then
+ * `ar`, so every set is reciprocal) and `x-default` (the default language).
+ * Google: "create a separate <url> element for each URL", each listing every
+ * variant including itself. Before Nov 2026 only the default-language URL
+ * was a `<loc>`, so the other language's pages were never submitted.
  */
 export function buildSitemapXml(
   urls: readonly SitemapUrl[],
@@ -133,19 +172,27 @@ export function buildSitemapXml(
     const href = (locale: PublicWebsiteLocale) =>
       escapeXml(origin + localizedSitePath(url.path, locale, defaultLocale));
     const main = href(defaultLocale);
-    return [
-      '  <url>',
-      `    <loc>${main}</loc>`,
-      ...PUBLIC_WEBSITE_LOCALES.map(
-        (locale) =>
-          `    <xhtml:link rel="alternate" hreflang="${locale}" href="${href(locale)}"/>`,
-      ),
-      `    <xhtml:link rel="alternate" hreflang="x-default" href="${main}"/>`,
-      `    <lastmod>${escapeXml(url.lastModified)}</lastmod>`,
-      `    <changefreq>${url.changeFrequency}</changefreq>`,
-      `    <priority>${url.priority.toFixed(1)}</priority>`,
-      '  </url>',
-    ].join('\n');
+    const locales = [
+      defaultLocale,
+      ...PUBLIC_WEBSITE_LOCALES.filter((locale) => locale !== defaultLocale),
+    ];
+    return locales
+      .map((locale) =>
+        [
+          '  <url>',
+          `    <loc>${href(locale)}</loc>`,
+          ...PUBLIC_WEBSITE_LOCALES.map(
+            (alternate) =>
+              `    <xhtml:link rel="alternate" hreflang="${alternate}" href="${href(alternate)}"/>`,
+          ),
+          `    <xhtml:link rel="alternate" hreflang="x-default" href="${main}"/>`,
+          `    <lastmod>${escapeXml(url.lastModified)}</lastmod>`,
+          `    <changefreq>${url.changeFrequency}</changefreq>`,
+          `    <priority>${url.priority.toFixed(1)}</priority>`,
+          '  </url>',
+        ].join('\n'),
+      )
+      .join('\n');
   });
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
