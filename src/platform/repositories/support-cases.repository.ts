@@ -112,6 +112,22 @@ export class SupportCasesRepository {
     return touched;
   }
 
+  /**
+   * B5 (UX audit) V35 — closes a case AS THE REQUESTER.
+   *
+   * Through `close_support_case_for_requester` (SECURITY DEFINER), for the
+   * same reason as `touchAsRequester`: a requester has no UPDATE policy on
+   * `support_cases`. The function sets `status = 'closed'` (and
+   * `updated_at`) on a case the caller personally requested, and nothing
+   * else. Returns `true` when it closed the case now, `false` when there
+   * was nothing to change (already closed — or not the caller's).
+   */
+  async closeAsRequester(tx: Prisma.TransactionClient, id: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ closed: boolean }[]>`
+      SELECT close_support_case_for_requester(${id}) AS closed`;
+    return rows[0]?.closed === true;
+  }
+
   touch(tx: Prisma.TransactionClient, id: string): Promise<SupportCaseWithOrganization> {
     return tx.supportCase.update({
       where: { id },

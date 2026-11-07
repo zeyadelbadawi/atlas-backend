@@ -14,6 +14,8 @@ export interface CheckoutSnapshotResponse {
   readonly target: CheckoutTargetResponse;
   readonly billingCycle?: PrismaCheckout['billingCycle'];
   readonly displayName: string;
+  /** B5 (UX audit) V21 — an add-on's Arabic name as frozen at checkout, when it has one. */
+  readonly displayNameAr?: string;
   readonly price: MoneyResponse;
   readonly capturedAt: string;
   /**

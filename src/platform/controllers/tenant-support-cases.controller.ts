@@ -28,6 +28,8 @@ import {
   Controller,
   Get,
   Header,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -159,6 +161,24 @@ export class TenantSupportCasesController {
       caseId,
       body,
     );
+  }
+
+  /**
+   * B5 (UX audit) V35 — the customer closes their own ticket.
+   *
+   * Same mount and the same boundary as `getMine`/`replyToMine`: the
+   * requester-scoped RLS policy decides what exists, so someone else's
+   * ticket answers 404. Idempotent: closing a closed ticket answers 200
+   * with the ticket unchanged. 200, not Nest's POST default 201 — nothing
+   * is created.
+   */
+  @Post('support-cases/mine/:caseId/close')
+  @HttpCode(HttpStatus.OK)
+  async closeMine(
+    @Req() request: Request,
+    @Param('caseId') caseId: string,
+  ): Promise<SupportCaseDetailResponse> {
+    return this.supportCasesService.closeMyCase(request.authContext!.userId, caseId);
   }
 
   /**

@@ -61,6 +61,24 @@ export class CourseOrderPaymentsController {
     );
   }
 
+  /**
+   * B7 (UX audit) V12 — the buyer's payments for this order, newest first,
+   * so a checkout opened in a new tab resumes where it was (a proof already
+   * under review, or a payment still waiting for its proof) instead of
+   * starting at the method step. Buyer-self-scoped: someone else's order
+   * answers 404.
+   */
+  @Get(':id/payments')
+  async list(
+    @Req() request: Request,
+    @Param('id') orderId: string,
+  ): Promise<CourseOrderPaymentResponse[]> {
+    return this.courseOrderPaymentsService.listPayments(
+      request.authContext!.userId,
+      orderId,
+    );
+  }
+
   @Get(':id/payments/:paymentId')
   async get(
     @Req() request: Request,

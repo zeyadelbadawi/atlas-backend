@@ -188,6 +188,18 @@ export class CreatePlatformBankTransferMethodDto {
   @MaxLength(300)
   readonly description?: string;
 
+  /** B5/B8 (UX audit) — the Arabic display name; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  readonly displayNameAr?: string;
+
+  /** The Arabic description; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  readonly descriptionAr?: string;
+
   @ValidateNested()
   @Type(() => BankTransferInstructionsDto)
   readonly instructions!: BankTransferInstructionsDto;
@@ -213,6 +225,18 @@ export class CreatePlatformWalletMethodDto {
   @IsString()
   @MaxLength(300)
   readonly description?: string;
+
+  /** B5/B8 (UX audit) — the Arabic display name; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  readonly displayNameAr?: string;
+
+  /** The Arabic description; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  readonly descriptionAr?: string;
 
   @ValidateNested()
   @Type(() => WalletTransferInstructionsDto)
@@ -240,6 +264,18 @@ export class CreatePlatformInstapayMethodDto {
   @MaxLength(300)
   readonly description?: string;
 
+  /** B5/B8 (UX audit) — the Arabic display name; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  readonly displayNameAr?: string;
+
+  /** The Arabic description; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  readonly descriptionAr?: string;
+
   @ValidateNested()
   @Type(() => InstapayInstructionsDto)
   readonly instructions!: InstapayInstructionsDto;
@@ -266,6 +302,18 @@ export class UpdatePlatformPaymentMethodDto {
   @IsString()
   @MaxLength(300)
   readonly description?: string;
+
+  /** B5/B8 (UX audit) — the Arabic display name; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  readonly displayNameAr?: string;
+
+  /** The Arabic description; the English one is the fallback. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  readonly descriptionAr?: string;
 
   /** New details for a bank-transfer method. */
   @IsOptional()

@@ -15,6 +15,9 @@ export interface PlatformAddOnRow {
   readonly key: string;
   readonly name: string;
   readonly description: string | null;
+  /** B5 (UX audit) V21 — the Arabic name and description shown in the Arabic store; `null` = the English one is shown. */
+  readonly nameAr: string | null;
+  readonly descriptionAr: string | null;
   readonly catalogStatus: AddOnCatalogStatusValue;
   /** Academies that currently have this add-on installed (any non-uninstalled row). */
   readonly installCount: number;

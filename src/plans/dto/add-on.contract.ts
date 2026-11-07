@@ -12,6 +12,9 @@ export interface AddOnResponse {
   readonly key: string;
   readonly name: string;
   readonly description?: string;
+  /** B5 (UX audit) V21 — the Arabic name and description a Platform Owner entered; the English ones are the fallback. */
+  readonly nameAr?: string;
+  readonly descriptionAr?: string;
   readonly effect: AddOnEffect;
   readonly compatiblePlanKeys: readonly string[];
   readonly pricing?: PlanPricingMetadataResponse;
@@ -32,6 +35,8 @@ export function toAddOnResponse(addOn: PrismaAddOn): AddOnResponse {
     key: addOn.key,
     name: addOn.name,
     description: addOn.description ?? undefined,
+    nameAr: addOn.nameAr ?? undefined,
+    descriptionAr: addOn.descriptionAr ?? undefined,
     effect: addOn.effect as unknown as AddOnEffect,
     compatiblePlanKeys: addOn.compatiblePlanKeys,
     pricing: (addOn.pricing as PlanPricingMetadataResponse | null) ?? undefined,

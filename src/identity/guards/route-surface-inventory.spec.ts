@@ -172,6 +172,8 @@ const SELF_OR_LEARNER = new Set<string>([
   'GET course-orders/:orderId',
   'GET course-orders/:id/payment-methods',
   'POST course-orders/:id/payments',
+  // B7 V12 — the buyer's own payments on their order (checkout resume).
+  'GET course-orders/:id/payments',
   'GET course-orders/:id/payments/:paymentId',
   'PATCH course-orders/:id/payments/:paymentId/proof',
   'GET course-orders/:id/payments/:paymentId/proof/file',

@@ -523,6 +523,61 @@ export class SupportCasesService {
   }
 
   /**
+   * B5 (UX audit) V35 — the requester closes their OWN ticket.
+   *
+   * ISOLATION IS THE DATABASE'S JOB, as for `getMyCase`: the case is read
+   * under the caller's user context, so another person's ticket (in another
+   * tenant or the same one) does not exist here and answers 404, never 403.
+   * The write goes through `close_support_case_for_requester`, which only
+   * ever touches a ticket the caller requested and only its status.
+   *
+   * IDEMPOTENT. Closing an already-closed ticket answers 200 with the ticket
+   * as it is, writes nothing and records nothing — a double click or a
+   * retry after a lost response is not a second status change.
+   *
+   * Recorded like every other status change (`support_case.status_changed`,
+   * `{ status: 'closed' }`), with `closedBy: 'requester'` so the history
+   * says who closed it. A closed ticket accepts no further replies
+   * (`postRequesterReply`); the customer opens a new one instead.
+   */
+  async closeMyCase(userId: string, caseId: string): Promise<SupportCaseDetailResponse> {
+    return this.tenancyContextService.runInUserContext(userId, async (tx) => {
+      const supportCase = await this.loadCaseOrThrow(tx, caseId);
+
+      let current = supportCase;
+      if (supportCase.status !== 'closed') {
+        const closed = await this.supportCasesRepository.closeAsRequester(tx, caseId);
+        if (closed) {
+          current = await this.loadCaseOrThrow(tx, caseId);
+          await this.auditLogWriterService.write(tx, {
+            actorUserId: userId,
+            organizationId: supportCase.organizationId ?? undefined,
+            academyId: supportCase.academyId ?? undefined,
+            action: 'support_case.status_changed',
+            targetType: 'support_case',
+            targetId: caseId,
+            targetLabel: supportCase.subject,
+            context: { status: 'closed', closedBy: 'requester' },
+          });
+        } else {
+          // Closed by someone else between the read and the write.
+          current = await this.loadCaseOrThrow(tx, caseId);
+        }
+      }
+
+      const messages = await this.supportCaseMessagesRepository.findManyForCase(
+        tx,
+        caseId,
+      );
+      return toSupportCaseDetailResponse(
+        current,
+        messages,
+        await this.findThreadAttachments(tx, messages),
+      );
+    });
+  }
+
+  /**
    * P53 — validates an attachment's REAL bytes and writes them to object
    * storage, returning what the row needs. Called BEFORE the database
    * transaction that creates the message, deliberately:

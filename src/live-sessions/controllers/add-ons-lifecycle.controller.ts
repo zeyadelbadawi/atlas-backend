@@ -100,6 +100,9 @@ export class AddOnsLifecycleController {
           key: addOn.key,
           name: addOn.name,
           description: addOn.description ?? undefined,
+          // B5 (UX audit) V21 — shown on Arabic pages instead of the English.
+          nameAr: addOn.nameAr ?? undefined,
+          descriptionAr: addOn.descriptionAr ?? undefined,
           effect: addOn.effect,
           compatiblePlanKeys: addOn.compatiblePlanKeys,
           pricing: addOn.pricing ?? undefined,

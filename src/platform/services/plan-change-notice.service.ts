@@ -73,6 +73,13 @@ export interface PlanChangeSnapshot {
   readonly limits: unknown;
 }
 
+export interface PlanChangeNoticePreview {
+  /** Subscriptions renewing into the plan (active or in grace). */
+  readonly subscribers: number;
+  /** Organizations whose owner the edit would email. */
+  readonly recipients: number;
+}
+
 export interface PlanChangeNoticeResult {
   readonly notified: number;
   readonly cleared: number;
@@ -116,54 +123,11 @@ export class PlanChangeNoticeService {
     let cursor: string | undefined;
 
     for (;;) {
-      const page = await this.tenancyContextService.runInUserContext(
-        platformOwnerId,
-        (tx) =>
-          tx.tenantSubscription.findMany({
-            where: {
-              status: { in: ['active', 'grace_period'] },
-              OR: [
-                { scheduledPlanId: after.id },
-                { planId: after.id, scheduledPlanId: null },
-              ],
-            },
-            select: {
-              organizationId: true,
-              status: true,
-              planId: true,
-              billingCycle: true,
-              grantedLimits: true,
-              scheduledPlanId: true,
-              scheduledGrantedLimits: true,
-              currentPeriodEnd: true,
-              priceChangeNotice: true,
-              organization: { select: { ownerUserId: true } },
-            },
-            orderBy: { organizationId: 'asc' },
-            take: PAGE_SIZE,
-            ...(cursor ? { cursor: { organizationId: cursor }, skip: 1 } : {}),
-          }),
-      );
+      const page = await this.subscriberPage(platformOwnerId, after.id, cursor);
       if (page.length === 0) break;
+      const lockByOrganization = await this.foundingLocks(platformOwnerId, page);
 
-      // B2 — a Founding Academy whose next renewal is still inside its
-      // price lock does not pay the edited price: its notice may only be
-      // about limits. Read the page's memberships once.
-      const locks = await this.tenancyContextService.runInUserContext(
-        platformOwnerId,
-        (tx) =>
-          tx.foundingMembership.findMany({
-            where: {
-              organizationId: { in: page.map((row) => row.organizationId) },
-              status: 'active',
-            },
-          }),
-      );
-      const lockByOrganization = new Map(
-        locks.map((row) => [row.organizationId, toFoundingLock(row)]),
-      );
-
-      for (const row of page as SubscriberRow[]) {
+      for (const row of page) {
         try {
           const outcome = await this.noticeOne(
             platformOwnerId,
@@ -208,14 +172,113 @@ export class PlanChangeNoticeService {
     return { notified, cleared, unchanged, failed };
   }
 
-  private async noticeOne(
+  /**
+   * B8 (UX audit) V08 — how many organizations a proposed edit WOULD email,
+   * before it is saved.
+   *
+   * The same subscriber query and the same per-subscriber decision as
+   * `notifySubscribers` (`decideNotice`), so the count shown in the plan
+   * editor's confirmation is the count the save will email — a monthly
+   * customer is not counted for a yearly-only price change, a Founding
+   * Academy inside its price lock only for a limit change. Reads only:
+   * nothing is written, emailed or audited. `subscribers` is everyone the
+   * edit is checked against (active or in grace, renewing into this plan);
+   * `recipients` is how many of their owners would be emailed.
+   */
+  async previewRecipients(
     platformOwnerId: string,
+    before: PlanChangeSnapshot,
+    after: PlanChangeSnapshot,
+    now: Date = new Date(),
+  ): Promise<PlanChangeNoticePreview> {
+    let subscribers = 0;
+    let recipients = 0;
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.subscriberPage(platformOwnerId, after.id, cursor);
+      if (page.length === 0) break;
+      const lockByOrganization = await this.foundingLocks(platformOwnerId, page);
+      for (const row of page) {
+        subscribers += 1;
+        const { notice } = this.decideNotice(
+          row,
+          before,
+          after,
+          now,
+          lockByOrganization.get(row.organizationId) ?? null,
+        );
+        if (notice && row.organization) recipients += 1;
+      }
+      if (page.length < PAGE_SIZE) break;
+      cursor = page[page.length - 1].organizationId;
+    }
+    return { subscribers, recipients };
+  }
+
+  /** One page of the subscriptions whose NEXT plan is `planId` (see the class comment). */
+  private async subscriberPage(
+    platformOwnerId: string,
+    planId: string,
+    cursor: string | undefined,
+  ): Promise<SubscriberRow[]> {
+    const page = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) =>
+        tx.tenantSubscription.findMany({
+          where: {
+            status: { in: ['active', 'grace_period'] },
+            OR: [{ scheduledPlanId: planId }, { planId, scheduledPlanId: null }],
+          },
+          select: {
+            organizationId: true,
+            status: true,
+            planId: true,
+            billingCycle: true,
+            grantedLimits: true,
+            scheduledPlanId: true,
+            scheduledGrantedLimits: true,
+            currentPeriodEnd: true,
+            priceChangeNotice: true,
+            organization: { select: { ownerUserId: true } },
+          },
+          orderBy: { organizationId: 'asc' },
+          take: PAGE_SIZE,
+          ...(cursor ? { cursor: { organizationId: cursor }, skip: 1 } : {}),
+        }),
+    );
+    return page as SubscriberRow[];
+  }
+
+  /**
+   * B2 — a Founding Academy whose next renewal is still inside its price
+   * lock does not pay the edited price: its notice may only be about
+   * limits. Reads the page's memberships once.
+   */
+  private async foundingLocks(
+    platformOwnerId: string,
+    page: readonly SubscriberRow[],
+  ): Promise<Map<string, FoundingLock>> {
+    const locks = await this.tenancyContextService.runInUserContext(
+      platformOwnerId,
+      (tx) =>
+        tx.foundingMembership.findMany({
+          where: {
+            organizationId: { in: page.map((row) => row.organizationId) },
+            status: 'active',
+          },
+        }),
+    );
+    return new Map(locks.map((row) => [row.organizationId, toFoundingLock(row)]));
+  }
+
+  /** What this edit means for one subscriber: the notice to send (or `null`) and any pending one it replaces. Pure — no reads or writes. */
+  private decideNotice(
     row: SubscriberRow,
     before: PlanChangeSnapshot,
     after: PlanChangeSnapshot,
     now: Date,
-    lock: FoundingLock | null = null,
-  ): Promise<'notified' | 'cleared' | 'unchanged'> {
+    lock: FoundingLock | null,
+  ) {
     const scheduled = row.scheduledPlanId === after.id;
     const cycle = renewalCycleFor(row.billingCycle, after.pricing);
     // The renewal price this customer will actually be charged, before and
@@ -254,6 +317,18 @@ export class PlanChangeNoticeService {
       pending,
       noticedAt: now,
     });
+    return { notice, pending };
+  }
+
+  private async noticeOne(
+    platformOwnerId: string,
+    row: SubscriberRow,
+    before: PlanChangeSnapshot,
+    after: PlanChangeSnapshot,
+    now: Date,
+    lock: FoundingLock | null = null,
+  ): Promise<'notified' | 'cleared' | 'unchanged'> {
+    const { notice, pending } = this.decideNotice(row, before, after, now, lock);
 
     if (!notice) {
       if (!pending || pending.planId !== after.id) return 'unchanged';

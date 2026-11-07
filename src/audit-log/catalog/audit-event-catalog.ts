@@ -986,6 +986,7 @@ export const AUDIT_EVENT_DEFINITIONS = [
   ev('support_case.replied', 'support', 'support_case', 'organization', true),
   ev('support_case.status_changed', 'support', 'support_case', 'organization', true, [
     'status',
+    'closedBy',
   ]),
   ev('support_case.auto_created', 'support', 'support_case', 'organization', true, [
     'provisioningRequestId',
@@ -1255,6 +1256,10 @@ export const AUDIT_EVENT_DEFINITIONS = [
     'addOnKey',
     'previousStatus',
     'newStatus',
+  ]),
+  ev('add_on.arabic_text_changed', 'platform', 'add_on', 'platform', false, [
+    'addOnKey',
+    'fields',
   ]),
   ev(
     'observability.synthetic_alert.armed',

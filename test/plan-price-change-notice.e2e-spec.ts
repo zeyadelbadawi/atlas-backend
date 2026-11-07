@@ -185,6 +185,77 @@ describe('Plan price-change notice (e2e) — B0-BIL-07', () => {
     await flush();
   });
 
+  /**
+   * B8 (UX audit) V08 — the plan editor's confirmation says how many
+   * organizations a save will email, BEFORE it is saved. Runs first, while
+   * the plan is untouched, and writes nothing: the very next test's
+   * "notified 2" is the save the preview predicted.
+   */
+  describe('notice preview (B8 V08)', () => {
+    const preview = (token: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post(`/platform-plans/${plan.key}/notice-preview`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+
+    it('counts exactly the owners the save would email, and emails nobody', async () => {
+      const monthlyPrice = await preview(platformOwner.accessToken, {
+        pricing: {
+          amount: 1390,
+          currency: 'EGP',
+          billingCycle: 'monthly',
+          yearlyAmount: 11900,
+        },
+      }).expect(200);
+      // Monthly + grace are told; the yearly subscriber's price is the
+      // same; the trial and the other plan are never counted.
+      expect(monthlyPrice.body).toEqual({ subscribers: 3, recipients: 2 });
+
+      const yearlyPrice = await preview(platformOwner.accessToken, {
+        pricing: {
+          amount: 1190,
+          currency: 'EGP',
+          billingCycle: 'monthly',
+          yearlyAmount: 12900,
+        },
+      }).expect(200);
+      expect(yearlyPrice.body).toEqual({ subscribers: 3, recipients: 1 });
+
+      const unchanged = await preview(platformOwner.accessToken, {}).expect(200);
+      expect(unchanged.body).toEqual({ subscribers: 3, recipients: 0 });
+
+      // A dry run: no notice, no banner, no version bump.
+      expect(await noticesFor(monthly.owner.userId)).toBe(0);
+      const sub = await admin.tenantSubscription.findUniqueOrThrow({
+        where: { organizationId: monthly.orgId },
+      });
+      expect(sub.priceChangeNotice).toBeNull();
+      const stored = await admin.plan.findUniqueOrThrow({ where: { id: plan.id } });
+      expect(stored.version).toBe(plan.version);
+    });
+
+    it('refuses what the save would refuse, and anyone but a Platform Owner', async () => {
+      const invalid = await preview(platformOwner.accessToken, {
+        pricing: { amount: 0, currency: 'EGP', billingCycle: 'monthly' },
+      }).expect(400);
+      // The price's own range rule, as on the save (this suite runs without
+      // the field-violation pipe, so it arrives as a message).
+      expect(JSON.stringify(invalid.body)).toContain('integerRange');
+      await preview(platformOwner.accessToken, { limits: { courses: -1 } }).expect(400);
+
+      await preview(monthly.owner.accessToken, {}).expect(403);
+      await request(app.getHttpServer())
+        .post(`/platform-plans/${plan.key}/notice-preview`)
+        .send({})
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/platform-plans/no-such-plan/notice-preview')
+        .set('Authorization', `Bearer ${platformOwner.accessToken}`)
+        .send({})
+        .expect(404);
+    });
+  });
+
   it('notifies each affected paying organization once, and nobody else', async () => {
     await patchPlan({
       pricing: {

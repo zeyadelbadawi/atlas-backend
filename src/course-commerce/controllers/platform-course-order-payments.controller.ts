@@ -19,7 +19,10 @@ import { PlatformCourseOrderPaymentsService } from '../services/platform-course-
 import { ApprovePaymentDto } from '../../billing/dto/approve-payment.dto';
 import { RejectPaymentDto } from '../../billing/dto/reject-payment.dto';
 import { PlatformPaymentListQueryDto } from '../../billing/dto/payment-list-query.dto';
-import type { PlatformCourseOrderPaymentResponse } from '../dto/platform-course-order-payment-list.contract';
+import type {
+  PlatformCourseOrderPaymentDetailResponse,
+  PlatformCourseOrderPaymentResponse,
+} from '../dto/platform-course-order-payment-list.contract';
 import type { CourseOrderPaymentResponse } from '../dto/course-order-payment.contract';
 import type { PaginatedResult } from '../../common/dto/pagination.contract';
 
@@ -42,7 +45,7 @@ export class PlatformCourseOrderPaymentsController {
   async get(
     @CurrentAuthContext() auth: AuthContext,
     @Param('id') paymentId: string,
-  ): Promise<PlatformCourseOrderPaymentResponse> {
+  ): Promise<PlatformCourseOrderPaymentDetailResponse> {
     return this.platformCourseOrderPaymentsService.getPayment(auth.userId, paymentId);
   }
 

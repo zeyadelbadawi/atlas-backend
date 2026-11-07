@@ -45,7 +45,11 @@ import { PrismaService } from '../../database/prisma.service';
 import { TenancyContextService } from '../../tenancy/services/tenancy-context.service';
 import { AuditLogWriterService } from '../../audit-log/services/audit-log-writer.service';
 import type { AuditFieldChange } from '../../audit-log/services/audit-log-writer.service';
-import { PlanChangeNoticeService } from './plan-change-notice.service';
+import {
+  PlanChangeNoticeService,
+  type PlanChangeNoticePreview,
+} from './plan-change-notice.service';
+import type { PreviewPlanNoticeDto } from '../dto/preview-plan-notice.dto';
 import { StaleResourceVersionException } from '../../concurrency/errors/stale-resource-version.exception';
 import { toPlanResponse } from '../../plans/dto/plan.contract';
 import type { PlanResponse } from '../../plans/dto/plan.contract';
@@ -510,6 +514,35 @@ export class PlatformPlansService {
    * reported alongside so the number is explainable rather than merely
    * smaller.
    */
+  /**
+   * B8 (UX audit) V08 — before saving a price or limit change, how many
+   * organizations it will email (`PlanChangeNoticeService.previewRecipients`,
+   * the very decision the save runs). A dry run: nothing is written. The
+   * proposal is validated like the save validates it, so the editor never
+   * shows a count for an edit the save would refuse.
+   */
+  async previewNotice(
+    platformOwnerId: string,
+    key: string,
+    payload: PreviewPlanNoticeDto,
+  ): Promise<PlanChangeNoticePreview> {
+    this.assertCatalogShape({ pricing: payload.pricing, limits: payload.limits });
+    const plan = await this.prisma.plan.findUnique({ where: { key } });
+    if (!plan) throw new NotFoundException({ messageKey: 'errors.notFound' });
+    const proposed = {
+      ...plan,
+      pricing: payload.pricing ? (payload.pricing as unknown) : plan.pricing,
+      limits: payload.limits ? (payload.limits as unknown) : plan.limits,
+      // The version the save would produce, as in a real notice.
+      version: plan.version + 1,
+    };
+    return this.planChangeNoticeService.previewRecipients(
+      platformOwnerId,
+      plan,
+      proposed,
+    );
+  }
+
   async previewLimitImpact(
     platformOwnerId: string,
     key: string,

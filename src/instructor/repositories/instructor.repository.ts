@@ -33,7 +33,47 @@ export type QuizAttemptWithStudent = QuizAttempt & {
 
 export type SubmissionWithStudent = AssignmentSubmission & {
   student: Pick<User, 'id' | 'name'>;
+  /** B6 (UX audit) V06 — who graded it, by name (never the email). */
+  grader: Pick<User, 'name'> | null;
 };
+
+export type SubmissionWithGrader = AssignmentSubmission & {
+  grader: Pick<User, 'name'> | null;
+};
+
+/** The student and the grader's display name — what every review read carries. */
+const SUBMISSION_PEOPLE = {
+  student: { select: { id: true, name: true } },
+  grader: { select: { name: true } },
+} as const;
+
+/** B6 (UX audit) V17 — the quiz attempt list's server-side filters. */
+export interface QuizAttemptListFilter {
+  readonly skip: number;
+  readonly take: number;
+  readonly status?: QuizAttempt['status'];
+  readonly gradingStatus?: QuizAttempt['gradingStatus'];
+  readonly flagged?: boolean;
+  readonly late?: boolean;
+  /** The student's name, case-insensitive substring. */
+  readonly search?: string;
+}
+
+/** B6 (UX audit) V17 — the submission list's server-side filters. */
+export interface SubmissionListFilter {
+  readonly skip: number;
+  readonly take: number;
+  readonly gradingStatus?: AssignmentSubmission['gradingStatus'];
+  readonly late?: boolean;
+  readonly search?: string;
+}
+
+function studentNameWhere(search: string | undefined) {
+  const term = search?.trim();
+  return term
+    ? { student: { name: { contains: term, mode: 'insensitive' as const } } }
+    : {};
+}
 
 @Injectable()
 export class InstructorRepository {
@@ -195,9 +235,18 @@ export class InstructorRepository {
   async findQuizAttemptsForQuiz(
     tx: Prisma.TransactionClient,
     quizId: string,
-    options: { skip: number; take: number },
+    options: QuizAttemptListFilter,
   ): Promise<{ items: QuizAttemptWithStudent[]; totalItems: number }> {
-    const where: Prisma.QuizAttemptWhereInput = { quizId };
+    // Filters live in the query, so `totalItems` counts the filtered rows
+    // and page 2 is page 2 of the filtered list.
+    const where: Prisma.QuizAttemptWhereInput = {
+      quizId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.gradingStatus ? { gradingStatus: options.gradingStatus } : {}),
+      ...(options.flagged !== undefined ? { integrityFlagged: options.flagged } : {}),
+      ...(options.late !== undefined ? { isLate: options.late } : {}),
+      ...studentNameWhere(options.search),
+    };
     const [items, totalItems] = await Promise.all([
       tx.quizAttempt.findMany({
         where,
@@ -225,13 +274,18 @@ export class InstructorRepository {
   async findSubmissionsForAssignment(
     tx: Prisma.TransactionClient,
     assignmentId: string,
-    options: { skip: number; take: number },
+    options: SubmissionListFilter,
   ): Promise<{ items: SubmissionWithStudent[]; totalItems: number }> {
-    const where: Prisma.AssignmentSubmissionWhereInput = { assignmentId };
+    const where: Prisma.AssignmentSubmissionWhereInput = {
+      assignmentId,
+      ...(options.gradingStatus ? { gradingStatus: options.gradingStatus } : {}),
+      ...(options.late !== undefined ? { isLate: options.late } : {}),
+      ...studentNameWhere(options.search),
+    };
     const [items, totalItems] = await Promise.all([
       tx.assignmentSubmission.findMany({
         where,
-        include: { student: { select: { id: true, name: true } } },
+        include: SUBMISSION_PEOPLE,
         orderBy: { createdAt: 'desc' },
         skip: options.skip,
         take: options.take,
@@ -245,9 +299,10 @@ export class InstructorRepository {
     tx: Prisma.TransactionClient,
     studentId: string,
     courseId: string,
-  ): Promise<AssignmentSubmission[]> {
+  ): Promise<SubmissionWithGrader[]> {
     return tx.assignmentSubmission.findMany({
       where: { studentId, assignment: { courseId } },
+      include: { grader: { select: { name: true } } },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -258,7 +313,7 @@ export class InstructorRepository {
   ): Promise<SubmissionWithStudent | null> {
     return tx.assignmentSubmission.findUnique({
       where: { id: submissionId },
-      include: { student: { select: { id: true, name: true } } },
+      include: SUBMISSION_PEOPLE,
     }) as Promise<SubmissionWithStudent | null>;
   }
 
@@ -266,9 +321,10 @@ export class InstructorRepository {
     tx: Prisma.TransactionClient,
     submissionId: string,
     data: { score?: number; feedback?: string; gradedBy: string },
-  ): Promise<AssignmentSubmission> {
+  ): Promise<SubmissionWithGrader> {
     return tx.assignmentSubmission.update({
       where: { id: submissionId },
+      include: { grader: { select: { name: true } } },
       data: {
         gradingStatus: 'graded',
         score: data.score,

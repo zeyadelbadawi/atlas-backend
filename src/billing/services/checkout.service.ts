@@ -332,6 +332,7 @@ export class CheckoutService {
       target: { type: 'add_on', addOnKey: addOn.key },
       billingCycle: input.billingCycle ?? pricing.billingCycle,
       displayName: addOn.name,
+      ...(addOn.nameAr ? { displayNameAr: addOn.nameAr } : {}),
       price: {
         amountMinorUnits: Number(toMinorUnits(pricing.amount)),
         currency: pricing.currency,

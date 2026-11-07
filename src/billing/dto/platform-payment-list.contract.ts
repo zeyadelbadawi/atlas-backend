@@ -19,7 +19,14 @@
  * billing cycle).
  */
 import type { CheckoutTargetType, SubscriptionBillingCycle } from '@prisma/client';
-import type { PaymentWithSubscriptionReviewContext } from '../repositories/payments.repository';
+import type {
+  PaymentWithSubscriptionReviewContext,
+  PaymentWithSubscriptionReviewDetail,
+} from '../repositories/payments.repository';
+import {
+  toPaymentReviewSummary,
+  type PaymentReviewSummaryResponse,
+} from './payment-review-summary.contract';
 import { toPaymentResponse, type PaymentResponse } from './payment.contract';
 
 export interface PlatformPaymentCheckoutSummary {
@@ -40,7 +47,10 @@ export type PlatformPaymentListItemResponse = Omit<PaymentResponse, 'instruction
   PlatformPaymentReviewContext;
 
 export type PlatformPaymentDetailResponse = PaymentResponse &
-  PlatformPaymentReviewContext;
+  PlatformPaymentReviewContext & {
+    /** B8 (UX audit) V01 — the latest review decision and who made it. */
+    readonly review?: PaymentReviewSummaryResponse;
+  };
 
 function toReviewContext(
   payment: PaymentWithSubscriptionReviewContext,
@@ -77,7 +87,11 @@ export function toPlatformPaymentListItemResponse(
 }
 
 export function toPlatformPaymentDetailResponse(
-  payment: PaymentWithSubscriptionReviewContext,
+  payment: PaymentWithSubscriptionReviewDetail,
 ): PlatformPaymentDetailResponse {
-  return { ...toPaymentResponse(payment), ...toReviewContext(payment) };
+  return {
+    ...toPaymentResponse(payment),
+    ...toReviewContext(payment),
+    review: toPaymentReviewSummary(payment.reviews),
+  };
 }
