@@ -39,14 +39,17 @@ describe('audit email scrub', () => {
     const started = Date.now();
     expect(containsEmail(dataUrl)).toBe(false);
     expect(stripEmails(dataUrl)).toBe(dataUrl);
-    // ~1.2 MB: the old pattern needed minutes here.
-    expect(Date.now() - started).toBeLessThan(500);
+    // ~1.2 MB: the old pattern needed minutes here. The budget is loose on
+    // purpose: a shared CI runner is several times slower than a laptop (a
+    // 500 ms budget failed at 570 ms), and any regression is minutes, not ms.
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('stays linear after a lone @ followed by a long run', () => {
     const value = 'a@' + 'b'.repeat(500_000);
     const started = Date.now();
     expect(containsEmail(value)).toBe(false);
-    expect(Date.now() - started).toBeLessThan(500);
+    // ~80 ms on a laptop; the backtracking pattern this replaced took minutes.
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
